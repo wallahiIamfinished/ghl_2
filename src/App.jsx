@@ -1,6 +1,6 @@
 import { useState } from "react";
 import ContactList from "./ContactList";
-import UnifiedContactView, { makeHybridAdapter } from "./UnifiedContactView";
+import UnifiedContactView, { makeGhlAdapter } from "./UnifiedContactView";
 
 // Sub-account this build serves. Path-based, so swap per franchise later.
 const LOCATION_ID = "5awBlPxYQVQGyd1XudNB";
@@ -10,9 +10,10 @@ export default function App() {
   const initial = new URLSearchParams(window.location.search).get("contactId");
   const [selected, setSelected] = useState(initial || null);
 
-  // Detail view: Health + identity pull live; the rest is the vision layer,
-  // and any fetch failure falls back to the mock so it never breaks on screen.
-  const adapter = makeHybridAdapter(LOCATION_ID, { realCard: "health" });
+  // Detail pulls live data (real identity/household/Health/docs/email activity);
+  // the function adds the vision layer, and a fetch failure falls back to the
+  // built-in mock so it never breaks on screen.
+  const adapter = makeGhlAdapter(LOCATION_ID);
 
   if (!selected) {
     return <ContactList locationId={LOCATION_ID} onSelect={setSelected} />;
