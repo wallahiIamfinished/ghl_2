@@ -1,236 +1,245 @@
 /* ============================================================================
-   Netlify Function · /api/ghl/contact/:id
+   Netlify Function · /api/ghl/:locationId/contact/:id
    ----------------------------------------------------------------------------
-   GHL-direct proxy for the Unified Contact View (demo).
-   - Holds the Private Integration Token SERVER-SIDE (env GHL_PIT). The browser
-     never sees it; GHL has no browser CORS anyway.
-   - Resolves custom-field id<->fieldKey from your field definitions, so
-     GHL_FIELD_MAP below stays readable (keyed by fieldKey, not opaque ids).
-   - Returns the already-normalized UnifiedContact the React adapter expects.
-
-   ENV (set in Netlify → Site config → Environment variables):
-     GHL_PIT          Private Integration Token (read scopes). See note below.
-     GHL_PIPELINE_ID  the single pipeline id (optional; filters opps)
-
-   locationId is taken from the URL path (/api/ghl/:locationId/contact/:id) so
-   one deployment serves multiple sub-accounts. NOTE on token blast radius:
-   a path-based location implies either (a) an AGENCY PIT that can reach every
-   location — broad blast radius, guard it hard — or (b) a per-location PIT
-   looked up by locationId. For this demo a sub-account PIT whose location
-   matches the path is fine.
+   Assembles ONE rich record for the detail view:
+     REAL   → identity, immigration, household, ACA-subsidy estimate, document
+              checklist, the Health card + Insurance Workflow stage rail, real
+              opportunities, and real EMAIL activity (Conversations API).
+     VISION → the other seven service lines, cross-sell signals, and a few
+              demo activity events — clearly the Potemkin layer.
+   Every real call is best-effort; a failure falls back to vision so the screen
+   never comes up empty. PIT stays server-side (env GHL_PIT).
+   ENV: GHL_PIT, GHL_PIPELINE_ID (qT9EmKMANkGoTm8IAuQ4). locationId from path.
    ========================================================================== */
 
 const GHL_BASE = "https://services.leadconnectorhq.com";
 const VERSION  = "2021-07-28";
 
-/* Real field map for location 5awBlPxYQVQGyd1XudNB (built from /customFields).
-   Sensitive fields (card #, CVV, bank acct/routing, ITIN) are intentionally
-   NOT mapped — they must not render in the UI. SSN is mapped but masked. */
-const GHL_FIELD_MAP = {
-  // identity
-  middle_name:      "contact.middle_name",
-  sex:              "contact.sex",
-  ssn:              "contact.social_security_numberssn",   // masked in normalize()
-  drivers_license:  "contact.drivers_license",             // TEXTBOX_LIST: State/Number/Issued/Expired
-  language_primary: "contact.language",
-  referred_by:      "contact.referred_by",
-  // citizenship / immigration
-  is_us_citizen:    "contact.are_you_a_us_citizen",
-  citizenship_path: "contact.how_did_you_obtain_citizenship",
-  years_in_us:      "contact.years_in_us",
-  immigration_status:"contact.immigration_status_number",
-  visa_type:        "contact.visa_type",
-  // household
-  marital_status:   "contact.marital_status",
-  annual_income:    "contact.annual_income",
-  spouse_name:      "contact.spouse_name",
-  spouse_age:       "contact.spouse_age",
-  spouse_income:    "contact.spouse_yearly_income",
-  has_dependents:   "contact.dependents",                  // Y / N
-  dependent_name:   "contact.dependent_name",
-  dependent_age:    "contact.dependent_age",
-  dependent_income: "contact.dependent_yearly_income",
-  // engagement — no per-line status fields exist in this env; coarse stand-in
-  services_selected:"contact.services_selected",           // Insurance / Taxes / Credit Repair
-  payment_method:   "contact.payment_method",
+/* ---- field map (real keys for location 5awBlPxYQVQGyd1XudNB) ---- */
+const F = {
+  middle_name: "contact.middle_name", sex: "contact.sex",
+  ssn: "contact.social_security_numberssn", drivers_license: "contact.drivers_license",
+  language: "contact.language", referred_by: "contact.referred_by",
+  is_citizen: "contact.are_you_a_us_citizen", citizenship_path: "contact.how_did_you_obtain_citizenship",
+  years_in_us: "contact.years_in_us", immigration_status: "contact.immigration_status_number",
+  visa_type: "contact.visa_type", visa_exp: "contact.visa_expiration",
+  alien_number: "contact.alien_number", ead: "contact.ead_category_0", asylee: "contact.asylee_status",
+  marital: "contact.marital_status", income: "contact.annual_income",
+  spouse_name: "contact.spouse_name", spouse_age: "contact.spouse_age",
+  has_deps: "contact.dependents", dep_name: "contact.dependent_name", dep_age: "contact.dependent_age",
+  services: "contact.services_selected",
 };
+const DL_OPT = { state: "e0a1bfce-2d60-46c1-af0e-9fdc8cf88d30", exp: "35414f41-c04c-492b-982b-dea0964b4525" };
 
-// Sub-option ids inside the drivers_license TEXTBOX_LIST (for composite parse).
-const DL_OPT = {
-  state: "e0a1bfce-2d60-46c1-af0e-9fdc8cf88d30",
-  number:"97696a92-ea9f-4fb7-9825-d55018c6bc3c",
-  issued:"ec9b4bad-5f0d-4c49-b07b-5351aae61b14",
-  exp:   "35414f41-c04c-492b-982b-dea0964b4525",
-};
+/* document checklist — present = file-upload field has a value */
+const DOCS = [
+  ["Driver's License",            "contact.contactsample_document_k8i_copy"],
+  ["Passport photo",              "contact.american_passport_photo"],
+  ["Foreign passport",            "contact.foreign_passport_photo"],
+  ["Immigration card (I-551/766)","contact.front__back_immigration_card_i551__i766_image_upload"],
+  ["I-94 arrival record",         "contact.i94_arrival_record"],
+  ["I-797 notice of action",      "contact.i797_notice_of_action_if_available"],
+  ["Naturalization certificate",  "contact.naturalization_certificate_n550n570"],
+  ["Consular ID",                 "contact.front_consular_id_image_upload"],
+];
 
-const _defsCache = {}; // idToKey maps cached per location (warm instance)
-
-async function ghl(path) {
-  const r = await fetch(`${GHL_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${process.env.GHL_PIT}`,
-      Version: VERSION,
-      Accept: "application/json",
-    },
-  });
-  if (!r.ok) throw new Error(`GHL ${r.status} on ${path}`);
-  return r.json();
-}
-
-async function idToKey(loc) {
-  if (_defsCache[loc]) return _defsCache[loc];
-  const data = await ghl(`/locations/${loc}/customFields`);
-  const map = {};
-  for (const f of data.customFields || []) map[f.id] = f.fieldKey;
-  _defsCache[loc] = map;
-  return map;
-}
-
-function mask(v) { return v ? `***-**-${String(v).slice(-4)}` : "—"; }
-function arr(v) { return Array.isArray(v) ? v : v ? [v] : []; }
-
-// TEXTBOX_LIST values can come back keyed by sub-option id OR label. Pull by
-// trying the known id first, then a label substring.
-function composite(val, optId, labelRe) {
-  if (val == null) return undefined;
-  if (typeof val === "object" && !Array.isArray(val)) {
-    if (val[optId] != null) return val[optId];
-    const k = Object.keys(val).find((kk) => labelRe.test(kk));
-    if (k) return val[k];
-  }
-  if (Array.isArray(val)) {
-    const hit = val.find((x) => x?.id === optId || labelRe.test(x?.label || ""));
-    if (hit) return hit.value ?? hit.fieldValue;
-  }
-  return undefined;
-}
-
-// Insurance Workflow (qT9EmKMANkGoTm8IAuQ4) — stage id → name, and name → card state.
+/* Insurance Workflow (qT9EmKMANkGoTm8IAuQ4) */
+const HEALTH_STAGE_NAMES = ["Document Collection", "Documents Complete", "Enrollment", "Closed"];
 const HEALTH_STAGES = {
   "31b7a48e-3996-4f51-8740-d45de7d6649b": "Document Collection",
   "ef01de2c-edf6-4944-8371-284637c2a91c": "Documents Complete",
   "4dbeca01-0e50-4117-99bd-a640245eed56": "Enrollment",
   "80e42234-52b3-48f3-8e8f-a7ba2e6431f1": "Closed",
 };
-const HEALTH_STATE = { // green when done, ochre while in-flight
-  "document collection": "pending", "documents complete": "pending",
-  "enrollment": "pending", "closed": "active",
+
+/* ---- VISION layer (Potemkin) ---- */
+const VISION_CARDS = [
+  { key: "medicare", label: "Medicare", state: "crosssell", detail: "Cross-sell triggered", sub: "Eligible 2026-12 · opp open" },
+  { key: "life", label: "Life Insurance", state: "none", detail: "Not engaged", sub: "life_gap flag set" },
+  { key: "group", label: "Group / Ancillary", state: "na", detail: "N/A — self-employed", sub: "(employees = 0)" },
+  { key: "tax", label: "Tax", state: "active", detail: "Active · 2024 filed", sub: "Toro #TR-8842 · refund $2.1k" },
+  { key: "bookkeeping", label: "Bookkeeping", state: "active", detail: "Active · monthly", sub: "QBO · 2025-04 closed" },
+  { key: "advisory", label: "Advisory", state: "crosssell", detail: "Cross-sell triggered", sub: "income > threshold · opp open" },
+  { key: "pc", label: "P&C", state: "pending", detail: "Pending P&C launch", sub: "Eligible · has property + biz" },
+];
+const VISION_CROSSSELL = [
+  { sev: "open", title: "Medicare-eligible 2026-12 (turns 64y9m)", detail: "Opportunity auto-created in Medicare pipeline · assigned to Julio · stage 01" },
+  { sev: "open", title: "Advisory cross-sell · AGI > threshold AND advisory_status=none", detail: "Opportunity auto-created · assigned to Julio · stage 01 · pending outreach" },
+  { sev: "queued", title: "Life gap flag set", detail: "(high income, no Life) · queued behind Advisory · cluster prevents firing twice" },
+];
+const VISION_ACTIVITY = [
+  { icon: "call", title: "Call from Julio", meta: "Today", body: "Discussed coverage options and next steps", expandable: true },
+  { icon: "sign", title: "Adobe Sign envelope completed · engagement letter", meta: "5 days ago", body: "Filed to SharePoint · field updated" },
+  { icon: "flow", title: "Workflow fired · cross-sell trigger", meta: "8 days ago", body: "created opp · scheduled outreach" },
+];
+
+/* ---- helpers ---- */
+const ghl = async (path) => {
+  const r = await fetch(`${GHL_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${process.env.GHL_PIT}`, Version: VERSION, Accept: "application/json" },
+  });
+  if (!r.ok) throw new Error(`GHL ${r.status} on ${path}`);
+  return r.json();
 };
+const json = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
+const mask = (v) => (v ? `***-**-${String(v).slice(-4)}` : "—");
+const num = (v) => Number(String(v ?? "").replace(/[^0-9.]/g, "")) || 0;
 
-// Block-D: Health reflects the real pipeline stage when an opp exists, else the
-// Services Selected checkbox. Other lines are the Potemkin stand-in.
-function serviceLines(selected, healthStage) {
-  const sel = arr(selected).map((s) => String(s).toLowerCase());
-  const has = (re) => sel.some((s) => re.test(s));
-  const st = (on) => (on ? "active" : "none");
-
-  const health = healthStage
-    ? { key: "health", label: "Health / ACA", state: HEALTH_STATE[String(healthStage).toLowerCase()] || "pending", detail: healthStage, sub: "Insurance Workflow" }
-    : { key: "health", label: "Health / ACA", state: st(has(/insurance/)), detail: has(/insurance/) ? "Selected" : "Not engaged", sub: "" };
-
-  return [
-    health,
-    { key: "medicare", label: "Medicare", state: "none", detail: "Not engaged", sub: "" },
-    { key: "life", label: "Life Insurance", state: "none", detail: "Not engaged", sub: "" },
-    { key: "group", label: "Group / Ancillary", state: "none", detail: "Not engaged", sub: "" },
-    { key: "tax", label: "Tax", state: st(has(/tax/)), detail: has(/tax/) ? "Selected" : "Not engaged", sub: "" },
-    { key: "bookkeeping", label: "Bookkeeping", state: "none", detail: "Not engaged", sub: "" },
-    { key: "advisory", label: "Advisory", state: "none", detail: "Not engaged", sub: "" },
-    { key: "credit", label: "Credit Repair", state: st(has(/credit/)), detail: has(/credit/) ? "Selected" : "Not engaged", sub: "" },
-  ];
+function composite(val, optId, labelRe) {
+  if (val == null) return undefined;
+  if (typeof val === "object" && !Array.isArray(val)) {
+    if (val[optId] != null) return val[optId];
+    const k = Object.keys(val).find((kk) => labelRe.test(kk));
+    return k ? val[k] : undefined;
+  }
+  if (Array.isArray(val)) {
+    const hit = val.find((x) => x?.id === optId || labelRe.test(x?.label || ""));
+    return hit ? (hit.value ?? hit.fieldValue) : undefined;
+  }
+  return undefined;
 }
+
+// 2025 FPL (48 states): $15,060 + $5,380 per extra person. ACA subsidy band 100–400%.
+function subsidy(income, size) {
+  if (!income || !size) return undefined;
+  const fpl = 15060 + (size - 1) * 5380;
+  const pct = Math.round((income / fpl) * 100);
+  const band = pct >= 100 && pct <= 400 ? "subsidy-eligible" : pct < 100 ? "below 100% FPL" : "above 400% FPL";
+  return `~${pct}% FPL · ${band} (est.)`;
+}
+
+async function idToKey(loc) {
+  const data = await ghl(`/locations/${loc}/customFields`);
+  const m = {};
+  for (const f of data.customFields || []) m[f.id] = f.fieldKey;
+  return m;
+}
+
+// Real EMAIL activity from the Conversations API (best-effort).
+async function emailActivity(loc, contactId) {
+  try {
+    const s = await ghl(`/conversations/search?locationId=${loc}&contactId=${contactId}`);
+    const convos = s.conversations || [];
+    const items = [];
+    for (const c of convos.slice(0, 3)) {
+      try {
+        const m = await ghl(`/conversations/${c.id}/messages`);
+        const msgs = m.messages?.messages || m.messages || [];
+        for (const msg of msgs) {
+          const t = String(msg.messageType || msg.type || "").toUpperCase();
+          if (!t.includes("EMAIL")) continue;
+          const out = String(msg.direction || "").toLowerCase() === "outbound";
+          items.push({
+            icon: "email",
+            title: out ? "Email sent to client" : "Email received from client",
+            meta: msg.dateAdded || msg.dateUpdated || "",
+            body: msg.subject || msg.meta?.email?.subject || (msg.body || "").toString().slice(0, 160) || "(email)",
+            expandable: true,
+            _ts: Date.parse(msg.dateAdded || msg.dateUpdated || 0) || 0,
+          });
+        }
+      } catch (_) {}
+    }
+    items.sort((a, b) => b._ts - a._ts);
+    return items;
+  } catch (_) {
+    return [];
+  }
+}
+
 const oppStage = (o) =>
   o.pipelineStageName || o.stageName || HEALTH_STAGES[o.pipelineStageId] || HEALTH_STAGES[o.stageId] || "";
 
-function normalize(contact, opps, idKey) {
-  // Contact GET returns customFields as [{ id, value }] keyed by id → remap to fieldKey.
-  const byKey = (contact.customFields || []).map((cf) => ({ key: idKey[cf.id], value: cf.value }));
-  const g = (k) => {
-    const fk = GHL_FIELD_MAP[k];
-    const hit = byKey.find((x) => x.key === fk);
-    return hit ? hit.value : undefined;
-  };
-
-  const dl = g("drivers_license");
-  const dlState = composite(dl, DL_OPT.state, /state/i);
-  const dlExp   = composite(dl, DL_OPT.exp,   /expir/i);
-
-  const isCitizen = String(g("is_us_citizen") || "").toLowerCase() === "yes";
-  const path = g("citizenship_path");
-  const citizenship = isCitizen
-    ? (path ? `US Citizen (${/natural/i.test(path) ? "naturalized" : "born in USA"})` : "US Citizen")
-    : (g("immigration_status") || g("visa_type") || "Non-citizen");
-  const yrs = g("years_in_us");
-
-  const depName = g("dependent_name");
-  const dependents = depName
-    ? [{ name: depName, age: g("dependent_age"), note: g("dependent_income") ? `income ${g("dependent_income")}` : "" }]
-    : [];
-
-  return {
-    id: contact.id,
-    firstName: contact.firstName, lastName: contact.lastName,
-    initials: (contact.firstName?.[0] || "") + (contact.lastName?.[0] || ""),
-    dob: contact.dateOfBirth, age: undefined,
-    city: contact.city, state: contact.state,
-    languagePrimary: g("language_primary"),
-    clientOf: (contact.tags || []).filter((t) => /JN/i.test(t)),
-    source: g("referred_by"),
-    identity: {
-      phone: contact.phone, email: contact.email, ssnMasked: mask(g("ssn")),
-      dlState, dlExp, address: contact.address1,
-      citizenship, inUsSince: yrs ? `${yrs} yrs` : undefined,
-    },
-    household: {
-      maritalStatus: g("marital_status"),
-      spouse: g("spouse_name") ? { name: g("spouse_name"), age: g("spouse_age") } : null,
-      size: undefined, income: g("annual_income"), incomeBasis: undefined,
-      employment: undefined,                 // no employment field in this env
-      dependents,
-    },
-    serviceLines: serviceLines(g("services_selected"), opps?.[0] ? oppStage(opps[0]) : undefined),
-    crossSell: [],          // no computed cross-sell fields in this env
-    activity: [],           // not wired in GHL-direct demo
-    documents: [],          // SharePoint = Phase C
-    opportunities: (opps || []).map((o) => ({
-      line: o.name || "Insurance Workflow", stage: oppStage(o),
-      meta: o.status || "", flag: false,
-    })),
-  };
-}
-
 export default async (req, context) => {
-  const id  = context.params?.id;
-  const loc = context.params?.locationId;
+  const id = context.params?.id, loc = context.params?.locationId;
   if (!id || !loc) return json({ error: "missing locationId or contact id" }, 400);
-  try {
-    const pipe = process.env.GHL_PIPELINE_ID;
-    const idKey = await idToKey(loc);
 
+  try {
+    const idKey = await idToKey(loc);
     const cRes = await ghl(`/contacts/${id}`);
     const contact = cRes.contact || cRes;
+    const byKey = (contact.customFields || []).map((cf) => ({ key: idKey[cf.id], value: cf.value }));
+    const gv = (fieldKey) => (byKey.find((x) => x.key === fieldKey) || {}).value;
+    const g = (k) => gv(F[k]);
 
-    // Opportunities are best-effort: if the search param casing is off, the
-    // contact + Health-from-services still render. GHL_PIPELINE_ID filters to
-    // the Insurance Workflow (qT9EmKMANkGoTm8IAuQ4).
+    // opportunities (best-effort)
     let opps = [];
     try {
       const q = new URLSearchParams({ location_id: loc, contact_id: id });
-      if (pipe) q.set("pipeline_id", pipe);
+      if (process.env.GHL_PIPELINE_ID) q.set("pipeline_id", process.env.GHL_PIPELINE_ID);
       const oRes = await ghl(`/opportunities/search?${q.toString()}`);
       opps = oRes.opportunities || [];
-    } catch (_) { /* non-fatal */ }
+    } catch (_) {}
 
-    return json(normalize(contact, opps, idKey));
+    // real email activity
+    const emails = await emailActivity(loc, id);
+
+    // identity + immigration
+    const dl = g("drivers_license");
+    const isCitizen = String(g("is_citizen") || "").toLowerCase() === "yes";
+    const path = g("citizenship_path");
+    const citizenship = isCitizen
+      ? `US Citizen (${/natural/i.test(path || "") ? "naturalized" : "born in USA"})`
+      : (g("immigration_status") || g("visa_type") || "Non-citizen");
+
+    // household + subsidy
+    const depName = g("dep_name");
+    const depCount = String(g("has_deps") || "").toUpperCase() === "Y" ? (depName ? 1 : 1) : 0;
+    const spouse = g("spouse_name");
+    const size = 1 + (spouse ? 1 : 0) + depCount;
+    const income = num(g("income"));
+
+    // Health card from the real Insurance Workflow stage
+    const healthOpp = opps[0];
+    const stageName = healthOpp ? oppStage(healthOpp) : "";
+    const idx = HEALTH_STAGE_NAMES.findIndex((n) => n.toLowerCase() === String(stageName).toLowerCase());
+    const healthCard = {
+      key: "health", label: "Health / ACA",
+      state: stageName ? (idx === 3 ? "active" : "pending") : "none",
+      detail: stageName || "Not engaged", sub: stageName ? "Insurance Workflow" : "",
+      pipeline: {
+        oppName: healthOpp?.name || "Insurance Workflow",
+        currentIndex: idx,
+        stages: HEALTH_STAGE_NAMES.map((n, i) => ({ name: n, done: idx > i, current: idx === i })),
+      },
+    };
+
+    return json({
+      id: contact.id, firstName: contact.firstName, lastName: contact.lastName,
+      initials: (contact.firstName?.[0] || "") + (contact.lastName?.[0] || ""),
+      dob: contact.dateOfBirth, city: contact.city, state: contact.state,
+      languagePrimary: g("language"),
+      clientOf: (contact.tags || []).filter((t) => /JN/i.test(t)),
+      source: g("referred_by"),
+      identity: {
+        phone: contact.phone, email: contact.email, ssnMasked: mask(g("ssn")),
+        dlState: composite(dl, DL_OPT.state, /state/i), dlExp: composite(dl, DL_OPT.exp, /expir/i),
+        address: contact.address1, citizenship,
+        inUsSince: g("years_in_us") ? `${g("years_in_us")} yrs` : undefined,
+        immigration: {
+          status: g("immigration_status"), visaType: g("visa_type"), visaExp: g("visa_exp"),
+          alien: g("alien_number"), ead: g("ead"), asylee: g("asylee"), path,
+        },
+      },
+      household: {
+        maritalStatus: g("marital"),
+        spouse: spouse ? { name: spouse, age: g("spouse_age") } : null,
+        size: `${size}${depCount ? ` (incl. ${depCount} dependent${depCount > 1 ? "s" : ""})` : ""}`,
+        income: income ? `$${income.toLocaleString()}` : undefined,
+        dependents: depName ? [{ name: depName, age: g("dep_age") }] : [],
+        subsidyHint: subsidy(income, size),
+      },
+      documents: DOCS.map(([label, key]) => ({ label, present: !!gv(key) })),
+      serviceLines: [healthCard, ...VISION_CARDS],
+      crossSell: VISION_CROSSSELL,
+      activity: [...emails, ...VISION_ACTIVITY],
+      emailCount: emails.length,
+      opportunities: opps.map((o) => ({ line: o.name || "Insurance Workflow", stage: oppStage(o), meta: o.status || "" })),
+    });
   } catch (e) {
     return json({ error: String(e.message || e) }, 502);
   }
 };
-
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status, headers: { "content-type": "application/json" },
-  });
-}
 
 export const config = { path: "/api/ghl/:locationId/contact/:id" };
