@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, ChevronRight, Bell, Building2 } from "lucide-react";
+import { Search, ChevronRight, Bell, Building2, Users, LineChart } from "lucide-react";
+import Growth from "./Growth";
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
@@ -12,6 +13,9 @@ const CSS = `
 .cl .ti{font-family:var(--serif);font-size:26px;font-weight:500;}
 .cl .sub{color:var(--ink2);font-size:13px;margin-top:3px;}
 .cl .topright{display:flex;align-items:center;gap:10px;}
+.cl .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+.cl .tab{display:flex;align-items:center;gap:6px;border:0;background:none;font-family:var(--sans);font-size:13px;color:var(--muted);padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;}
+.cl .tab.on{color:var(--teal);border-bottom-color:var(--teal);font-weight:600;}
 .cl .entity{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
 .cl .entity button{border:0;background:var(--paper);font-size:11.5px;padding:6px 12px;cursor:pointer;color:var(--ink2);font-family:var(--sans);display:flex;align-items:center;gap:5px;}
 .cl .entity button.on{background:var(--teal);color:#F4F1E8;}
@@ -78,6 +82,7 @@ export default function ContactList({ locationId, onSelect }) {
   const [entity, setEntity] = useState("all");   // all | insurance | consulting (vision)
   const [filter, setFilter] = useState("all");    // cross-line filter view (vision)
   const [bellOpen, setBellOpen] = useState(false);
+  const [tab, setTab] = useState("clients");      // clients | growth
 
   useEffect(() => {
     let live = true;
@@ -115,21 +120,33 @@ export default function ContactList({ locationId, onSelect }) {
       <div className="wrap">
         <div className="topbar">
           <div>
-            <div className="ti">Clients</div>
-            <div className="sub">JN Insurance &amp; Consulting · select a client to open their 360 view</div>
+            <div className="ti">{tab === "growth" ? "Growth Intelligence" : "Clients"}</div>
+            <div className="sub">{tab === "growth" ? "Run the book by value and cost to serve" : "JN Insurance & Consulting · select a client to open their 360 view"}</div>
           </div>
           <div className="topright">
-            <div className="entity">
-              <button className={entity === "all" ? "on" : ""} onClick={() => setEntity("all")}>All</button>
-              <button className={entity === "insurance" ? "on" : ""} onClick={() => setEntity("insurance")}><Building2 size={12} /> Insurance</button>
-              <button className={entity === "consulting" ? "on" : ""} onClick={() => setEntity("consulting")}><Building2 size={12} /> Consulting</button>
-            </div>
+            {tab === "clients" && (
+              <div className="entity">
+                <button className={entity === "all" ? "on" : ""} onClick={() => setEntity("all")}>All</button>
+                <button className={entity === "insurance" ? "on" : ""} onClick={() => setEntity("insurance")}><Building2 size={12} /> Insurance</button>
+                <button className={entity === "consulting" ? "on" : ""} onClick={() => setEntity("consulting")}><Building2 size={12} /> Consulting</button>
+              </div>
+            )}
             <div className="bell" onClick={() => setBellOpen((o) => !o)}>
               <Bell size={16} /><span className="dot" />
             </div>
           </div>
         </div>
 
+        {/* top-level tabs */}
+        <div className="tabs">
+          <button className={`tab ${tab === "clients" ? "on" : ""}`} onClick={() => setTab("clients")}><Users size={14} /> Clients</button>
+          <button className={`tab ${tab === "growth" ? "on" : ""}`} onClick={() => setTab("growth")}><LineChart size={14} /> Growth</button>
+        </div>
+
+        {tab === "growth" ? (
+          <Growth rows={rows} />
+        ) : (
+        <>
         {bellOpen && (
           <div className="notes">
             {NOTIFICATIONS.map((n, i) => (
@@ -183,6 +200,8 @@ export default function ContactList({ locationId, onSelect }) {
             </button>
           ))}
         </div>
+        </>
+        )}
       </div>
     </div>
   );
