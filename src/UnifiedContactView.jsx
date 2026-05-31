@@ -204,6 +204,13 @@ const CSS = `
 .ucv .qlist{max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:4px;}
 .ucv .qrow{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:9px 12px;font-size:12.5px;cursor:pointer;font-family:var(--sans);color:var(--ink);}
 .ucv .qrow:hover{border-color:var(--teal);}
+.ucv .doc.misc{gap:9px;}
+.ucv .misc-in{flex:1;border:0;border-bottom:1px dashed var(--line);background:transparent;font-size:12px;font-family:var(--sans);color:var(--ink);padding:2px 0;outline:none;}
+.ucv .misc-in:focus{border-bottom-color:var(--teal);}
+.ucv .misc-x{color:var(--muted);cursor:pointer;display:flex;flex:0 0 auto;}
+.ucv .misc-x:hover{color:var(--rust);}
+.ucv .addmisc{display:inline-flex;align-items:center;gap:5px;background:none;border:1px dashed var(--line);border-radius:5px;padding:5px 10px;margin-top:9px;font-size:11px;color:var(--ink2);cursor:pointer;font-family:var(--sans);}
+.ucv .addmisc:hover{border-color:var(--teal);color:var(--teal);}
 .ucv .docrow{cursor:pointer;}
 .ucv .ocr{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;margin-top:10px;}
 .ucv .ocr .kk{color:var(--muted);}
@@ -343,6 +350,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
   const [transcript, setTranscript] = useState(null);   // activity item for transcript modal
   const [chase, setChase] = useState(-1);                // -1 idle; 0..n animating chase steps
   const [quick, setQuick] = useState(null);              // null=closed; {q, field, value, saved} for Quick Update
+  const [miscDocs, setMiscDocs] = useState({});          // { [line]: [{label, checked}] } edge-case docs
 
   useEffect(() => {
     let live = true;
@@ -629,55 +637,58 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
 
           {/* DOCUMENTS + OPPORTUNITIES */}
           <div className="fade" style={{ animationDelay: "240ms" }}>
-            <div className="grid2">
-              <div>
-                <div className="sec-label">Document Checklist</div>
-                <div className="card">
-                  <div className="doctabs">
-                    {DOC_TABS.map(([key, label]) => (
-                      <button key={key} className={`doctab ${docLine === key ? "on" : ""}`} onClick={() => setDocLine(key)}>
-                        {label}{key !== "health" && <span className="demo">demo</span>}
-                      </button>
-                    ))}
-                  </div>
-                  {(c.documentsByLine?.[docLine] || []).map((d, i) => (
-                    <div className={`doc docrow ${d.present ? "" : "miss"}`} key={i} onClick={() => setDocPreview(d)}>
-                      <span className={`mk ${d.present ? "y" : "n"}`}>{d.present ? <Check size={12} /> : <X size={12} />}</span>
-                      {d.label}
-                    </div>
+            <div>
+              <div className="sec-label">Document Checklist</div>
+              <div className="card">
+                <div className="doctabs">
+                  {DOC_TABS.map(([key, label]) => (
+                    <button key={key} className={`doctab ${docLine === key ? "on" : ""}`} onClick={() => setDocLine(key)}>
+                      {label}{key !== "health" && <span className="demo">demo</span>}
+                    </button>
                   ))}
-                  {(c.documentsByLine?.[docLine] || []).some((d) => !d.present) && (
-                    chase >= 0 ? (
-                      <div className="reqdocs">
-                        {chaseSteps.map((st, i) => (
-                          <div className="step" key={i} style={{ opacity: i <= chase ? 1 : 0.35 }}>
-                            <span className="n">{i <= chase ? <Check size={9} /> : i + 1}</span> {st}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <button className="btn" style={{ marginTop: 11 }} onClick={runChase}>
-                        <MessageSquare size={13} /> Request missing documents
-                      </button>
-                    )
-                  )}
-                  <div className="foot-note">
-                    {docLine === "health"
-                      ? "Live from uploaded files · feeds the Document Collection gate"
-                      : "Sample checklist · not yet wired to uploads"}
-                  </div>
                 </div>
-              </div>
-              <div>
-                <div className="sec-label">Opportunities</div>
-                <div className="card">
-                  {c.opportunities.length ? c.opportunities.map((o, i) => (
-                    <div className="opp" key={i}>
-                      <div className="ol">{o.line} · <span className="st">{o.stage}</span></div>
-                      {o.meta && <div className="om">{o.meta}</div>}
+                {(c.documentsByLine?.[docLine] || []).map((d, i) => (
+                  <div className={`doc docrow ${d.present ? "" : "miss"}`} key={i} onClick={() => setDocPreview(d)}>
+                    <span className={`mk ${d.present ? "y" : "n"}`}>{d.present ? <Check size={12} /> : <X size={12} />}</span>
+                    {d.label}
+                  </div>
+                ))}
+
+                {/* Edge-case / additional documents (checkable) */}
+                {(miscDocs[docLine] || []).map((m, i) => (
+                  <div className={`doc misc ${m.checked ? "" : "miss"}`} key={`m${i}`}>
+                    <span className={`mk ${m.checked ? "y" : "n"}`} style={{ cursor: "pointer" }}
+                      onClick={() => setMiscDocs((s) => ({ ...s, [docLine]: s[docLine].map((x, j) => j === i ? { ...x, checked: !x.checked } : x) }))}>
+                      {m.checked ? <Check size={12} /> : null}
+                    </span>
+                    <input className="misc-in" placeholder="Additional document to request…" value={m.label}
+                      onChange={(e) => setMiscDocs((s) => ({ ...s, [docLine]: s[docLine].map((x, j) => j === i ? { ...x, label: e.target.value } : x) }))} />
+                    <span className="misc-x" onClick={() => setMiscDocs((s) => ({ ...s, [docLine]: s[docLine].filter((_, j) => j !== i) }))}><X size={12} /></span>
+                  </div>
+                ))}
+                <button className="addmisc" onClick={() => setMiscDocs((s) => ({ ...s, [docLine]: [...(s[docLine] || []), { label: "", checked: false }] }))}>
+                  <Plus size={12} /> Add misc
+                </button>
+
+                {(c.documentsByLine?.[docLine] || []).some((d) => !d.present) && (
+                  chase >= 0 ? (
+                    <div className="reqdocs">
+                      {chaseSteps.map((st, i) => (
+                        <div className="step" key={i} style={{ opacity: i <= chase ? 1 : 0.35 }}>
+                          <span className="n">{i <= chase ? <Check size={9} /> : i + 1}</span> {st}
+                        </div>
+                      ))}
                     </div>
-                  )) : <div className="foot-note">No open opportunities for this contact.</div>}
-                  <div className="foot-note">All opportunities roll up here · click → source pipeline</div>
+                  ) : (
+                    <button className="btn" style={{ marginTop: 11 }} onClick={runChase}>
+                      <MessageSquare size={13} /> Request missing documents
+                    </button>
+                  )
+                )}
+                <div className="foot-note">
+                  {docLine === "health"
+                    ? "Live from uploaded files · feeds the Document Collection gate"
+                    : "Sample checklist · not yet wired to uploads"}
                 </div>
               </div>
             </div>
