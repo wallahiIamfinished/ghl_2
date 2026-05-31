@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Phone, MessageCircle, Mail, Plus, Play, FileText, PenLine, Zap,
   Flag, Search, ChevronDown, ChevronRight, Check, X, Globe,
+  ClipboardList, StickyNote, CheckSquare, MessageSquare,
 } from "lucide-react";
 
 /* ============================================================================
@@ -45,11 +46,23 @@ const MOCK = {
     income: "$94,500", dependents: [{ name: "Sofia", age: "17" }],
     subsidyHint: "~218% FPL · subsidy-eligible (est.)",
   },
-  documents: [
-    { label: "Driver's License", present: true }, { label: "Passport photo", present: true },
-    { label: "Immigration card (I-551/766)", present: false }, { label: "I-94 arrival record", present: false },
-    { label: "Naturalization certificate", present: true }, { label: "Consular ID", present: false },
-  ],
+  documentsByLine: {
+    health: [
+      { label: "Driver's License", present: true }, { label: "Passport photo", present: true },
+      { label: "Immigration card (I-551/766)", present: false }, { label: "I-94 arrival record", present: false },
+      { label: "Naturalization certificate", present: true }, { label: "Consular ID", present: false },
+    ],
+    tax: [
+      { label: "W-2 (all employers)", present: true, dummy: true }, { label: "1099 forms", present: true, dummy: true },
+      { label: "Prior-year 1040", present: true, dummy: true }, { label: "1098 mortgage interest", present: false, dummy: true },
+      { label: "Dependent SSNs", present: true, dummy: true }, { label: "IDs for all filers", present: false, dummy: true },
+    ],
+    life: [
+      { label: "Completed application", present: true, dummy: true }, { label: "Medical exam (paramed)", present: false, dummy: true },
+      { label: "Attending Physician Statement (APS)", present: false, dummy: true }, { label: "Prior policy (if replacement)", present: false, dummy: true },
+      { label: "Beneficiary designation", present: true, dummy: true },
+    ],
+  },
   serviceLines: [
     { key: "health", label: "Health / ACA", state: "pending", detail: "Enrollment", sub: "Insurance Workflow",
       pipeline: { oppName: "Insurance Workflow", currentIndex: 2,
@@ -70,10 +83,11 @@ const MOCK = {
   ],
   activity: [
     { icon: "email", title: "Email sent to client", meta: "Today", body: "Re: 2025 enrollment — plan options attached", expandable: true },
-    { icon: "call", title: "Call from Julio", meta: "Yesterday", body: "Discussed 529 strategy and life for Roberto", expandable: true },
-    { icon: "sign", title: "Adobe Sign envelope completed", meta: "5 days ago", body: "Tax 2024 engagement letter filed" },
+    { icon: "form", title: "Form submitted · Health Enrollment", meta: "Yesterday", body: "Captured to contact record" },
+    { icon: "note", title: "Note added", meta: "3 days ago", body: "Client prefers Spanish; spouse Roberto interested in life" },
+    { icon: "task", title: "Task · Follow up on income docs", meta: "4 days ago", body: "Open" },
   ],
-  emailCount: 1,
+  activityCount: 4,
   opportunities: [{ line: "Insurance Workflow", stage: "Enrollment", meta: "open" }],
 };
 
@@ -137,13 +151,21 @@ const CSS = `
 .ucv .opp{padding:9px 0;border-bottom:1px solid var(--line);}.ucv .opp:last-child{border-bottom:none;}
 .ucv .opp .ol{font-size:12px;font-weight:600;}.ucv .opp .ol .st{font-weight:400;color:var(--ink2);}.ucv .opp .om{font-size:10.5px;color:var(--muted);margin-top:2px;}
 .ucv .foot-note{font-size:10.5px;color:var(--muted);font-style:italic;margin-top:8px;}
+.ucv .doctabs{display:flex;gap:6px;margin-bottom:10px;}
+.ucv .doctab{font-size:11px;padding:4px 11px;border-radius:20px;border:1px solid var(--line);background:var(--paper);color:var(--ink2);cursor:pointer;font-family:var(--sans);}
+.ucv .doctab.on{background:var(--teal);color:#F4F1E8;border-color:var(--teal);}
+.ucv .doctab .demo{font-size:8.5px;opacity:.7;margin-left:4px;text-transform:uppercase;letter-spacing:.05em;}
 .ucv .fade{opacity:0;transform:translateY(6px);animation:ucvUp .4s ease forwards;}
 @keyframes ucvUp{to{opacity:1;transform:none;}}
 @media(max-width:760px){.ucv .grid2{grid-template-columns:1fr;}.ucv .sl-grid{grid-template-columns:repeat(2,1fr);}.ucv .imm{grid-template-columns:1fr 1fr;}.ucv .actions{max-width:none;}.ucv .head{flex-wrap:wrap;}}
 `;
 
 const dotColor = { active: "var(--olive)", crosssell: "var(--ochre)", pending: "var(--ochre)", none: "var(--muted)", na: "var(--muted)" };
-const ACT_ICON = { email: Mail, call: Phone, wapp: MessageCircle, sign: PenLine, flow: Zap, note: FileText };
+const ACT_ICON = {
+  email: Mail, call: Phone, sms: MessageSquare, wapp: MessageCircle,
+  form: ClipboardList, note: StickyNote, task: CheckSquare, sign: PenLine, flow: Zap,
+};
+const DOC_TABS = [["health", "Health / ACA"], ["tax", "Tax"], ["life", "Life"]];
 
 function Section({ label, i, children }) {
   return (
@@ -158,6 +180,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
   const [c, setC] = useState(null);
   const [openCard, setOpenCard] = useState("health");
   const [openAct, setOpenAct] = useState(null);
+  const [docLine, setDocLine] = useState("health");
 
   useEffect(() => {
     let live = true;
@@ -280,9 +303,10 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
             </div>
           </Section>
 
-          {/* RECENT ACTIVITY — real emails + vision */}
-          <Section label={`Recent Activity${c.emailCount ? ` · ${c.emailCount} email${c.emailCount > 1 ? "s" : ""} on file` : ""}`} i={3}>
+          {/* RECENT ACTIVITY — real timeline: emails, forms, notes, tasks */}
+          <Section label={`Recent Activity${c.activityCount ? ` · ${c.activityCount} event${c.activityCount > 1 ? "s" : ""}` : ""}`} i={3}>
             <div className="card">
+              {c.activity.length === 0 && <div className="foot-note">No recorded activity for this contact yet.</div>}
               {c.activity.map((a, i) => {
                 const Ic = ACT_ICON[a.icon] || FileText;
                 const open = openAct === i;
@@ -309,13 +333,24 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
               <div>
                 <div className="sec-label">Document Checklist</div>
                 <div className="card">
-                  {c.documents.map((d, i) => (
+                  <div className="doctabs">
+                    {DOC_TABS.map(([key, label]) => (
+                      <button key={key} className={`doctab ${docLine === key ? "on" : ""}`} onClick={() => setDocLine(key)}>
+                        {label}{key !== "health" && <span className="demo">demo</span>}
+                      </button>
+                    ))}
+                  </div>
+                  {(c.documentsByLine?.[docLine] || []).map((d, i) => (
                     <div className={`doc ${d.present ? "" : "miss"}`} key={i}>
                       <span className={`mk ${d.present ? "y" : "n"}`}>{d.present ? <Check size={12} /> : <X size={12} />}</span>
                       {d.label}
                     </div>
                   ))}
-                  <div className="foot-note">Live from uploaded files · feeds the Document Collection gate</div>
+                  <div className="foot-note">
+                    {docLine === "health"
+                      ? "Live from uploaded files · feeds the Document Collection gate"
+                      : "Sample checklist · not yet wired to uploads"}
+                  </div>
                 </div>
               </div>
               <div>
