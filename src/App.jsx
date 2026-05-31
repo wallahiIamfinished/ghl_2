@@ -32,7 +32,7 @@ export default function App() {
       >
         ← All clients
       </button>
-      <UnifiedContactView contactId={selected} adapter={adapter} />
+      <UnifiedContactView contactId={selected} adapter={adapter} locationId={LOCATION_ID} />
     </div>
   );
 }
