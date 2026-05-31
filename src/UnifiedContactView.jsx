@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   Phone, MessageCircle, Mail, Plus, Play, FileText, PenLine, Zap,
-  Flag, Search, ChevronDown, ChevronRight, Check, X, Globe,
+  Flag, Search, ChevronRight, Check, X,
   ClipboardList, StickyNote, CheckSquare, MessageSquare,
 } from "lucide-react";
 
@@ -82,12 +82,13 @@ const MOCK = {
     { sev: "queued", title: "Life gap flag set", detail: "queued behind Advisory · cluster prevents firing twice" },
   ],
   activity: [
+    { icon: "call", title: "Call summary · inbound", meta: "Today", body: "8m 42s · Discussed plan options and document needs. Client confirmed income unchanged; interested in adding a dependent. Action: send enrollment docs, follow up in 3 days.", expandable: true, demo: true },
     { icon: "email", title: "Email sent to client", meta: "Today", body: "Re: 2025 enrollment — plan options attached", expandable: true },
     { icon: "form", title: "Form submitted · Health Enrollment", meta: "Yesterday", body: "Captured to contact record" },
     { icon: "note", title: "Note added", meta: "3 days ago", body: "Client prefers Spanish; spouse Roberto interested in life" },
     { icon: "task", title: "Task · Follow up on income docs", meta: "4 days ago", body: "Open" },
   ],
-  activityCount: 4,
+  activityCount: 5,
   opportunities: [{ line: "Insurance Workflow", stage: "Enrollment", meta: "open" }],
 };
 
@@ -196,6 +197,13 @@ const CSS = `
 .ucv .reqdocs .step{font-size:11px;color:var(--ink2);padding:3px 0;display:flex;align-items:center;gap:6px;}
 .ucv .reqdocs .step .n{width:15px;height:15px;border-radius:50%;background:rgba(31,77,74,.12);color:var(--teal);font-size:9px;display:flex;align-items:center;justify-content:center;}
 .ucv .policy{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.ucv .steps{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.ucv .steps-h{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:7px;}
+.ucv .stepc{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2);padding:3px 0;}
+.ucv .stepc .box{width:13px;height:13px;border-radius:3px;border:1.5px solid var(--line);flex:0 0 auto;}
+.ucv .qlist{max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:4px;}
+.ucv .qrow{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:9px 12px;font-size:12.5px;cursor:pointer;font-family:var(--sans);color:var(--ink);}
+.ucv .qrow:hover{border-color:var(--teal);}
 .ucv .docrow{cursor:pointer;}
 .ucv .ocr{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;margin-top:10px;}
 .ucv .ocr .kk{color:var(--muted);}
@@ -266,6 +274,56 @@ const OCR_FIELDS = {
 };
 const chaseSteps = ["Sending SMS + email with secure upload link…", "Reminder scheduled · 48h", "Agent task · 5 days", "Escalation to Julio · 10 days"];
 
+// "Steps to complete" for the CURRENT phase of a pipeline (vision placeholders;
+// refine later). Keyed by line, then by stage name. Health keys match the real
+// Insurance Workflow stage names.
+const STAGE_STEPS = {
+  health: {
+    "Document Collection": ["Send secure upload link", "Collect ID + proof of income", "Verify citizenship/immigration docs", "Confirm household + dependents"],
+    "Documents Complete": ["Review all docs for completeness", "Run subsidy/eligibility check", "Confirm plan preferences with client"],
+    "Enrollment": ["Submit application on GetCoveredNJ", "Capture confirmation #", "Send welcome + ID card info", "Schedule effectuation check"],
+    "Closed": ["Confirm coverage effectuated", "File final docs", "Set renewal reminder (AEP)"],
+  },
+  medicare: { default: ["Confirm eligibility date", "Run Sunfire quote", "Complete Scope of Appointment", "Submit application"] },
+  life: { default: ["Fact-find + needs analysis", "Collect UW docs", "Order paramed exam", "Submit application"] },
+  tax: { default: ["Send tax-doc checklist", "Collect W-2/1099 + IDs", "Prepare return", "Client review + e-sign", "File + capture IRS ack"] },
+  bookkeeping: { default: ["Grant QBO access", "Clean up chart of accounts", "Set monthly close cadence"] },
+  advisory: { default: ["Schedule fact-find", "Draft plan", "Deliver plan", "Set review cadence"] },
+  group: { default: ["Collect census", "Submit to Savoy", "Present proposal", "Open enrollment"] },
+  pc: { default: ["Gather property/vehicle info", "Run rater", "Present quote", "Bind policy"] },
+};
+function stepsFor(line, stageName) {
+  const m = STAGE_STEPS[line];
+  if (!m) return [];
+  return m[stageName] || m.default || [];
+}
+
+// Quick Update panel — friendly labels mapped to real GHL field keys.
+// (Demo: save is simulated. The keys are ready to wire to a real PATCH later.)
+const QUICK_FIELDS = [
+  { label: "Phone", key: "phone", type: "text" },
+  { label: "Email", key: "email", type: "text" },
+  { label: "Annual income", key: "contact.annual_income", type: "money" },
+  { label: "Marital status", key: "contact.marital_status", type: "select", options: ["Married", "Single", "Divorced"] },
+  { label: "Spouse name", key: "contact.spouse_name", type: "text" },
+  { label: "Spouse age", key: "contact.spouse_age", type: "text" },
+  { label: "Dependent name", key: "contact.dependent_name", type: "text" },
+  { label: "Dependent age", key: "contact.dependent_age", type: "text" },
+  { label: "Has dependents", key: "contact.dependents", type: "select", options: ["Y", "N"] },
+  { label: "Primary language", key: "contact.language", type: "select", options: ["English", "Spanish"] },
+  { label: "US citizen?", key: "contact.are_you_a_us_citizen", type: "select", options: ["Yes", "No"] },
+  { label: "How obtained citizenship", key: "contact.how_did_you_obtain_citizenship", type: "select", options: ["Born in the USA", "Naturalized Citizen"] },
+  { label: "Immigration status", key: "contact.immigration_status_number", type: "text" },
+  { label: "Visa type", key: "contact.visa_type", type: "text" },
+  { label: "Visa expiration", key: "contact.visa_expiration", type: "text" },
+  { label: "Alien number", key: "contact.alien_number", type: "text" },
+  { label: "Years in US", key: "contact.years_in_us", type: "text" },
+  { label: "Driver's license", key: "contact.drivers_license", type: "text" },
+  { label: "Referred by", key: "contact.referred_by", type: "text" },
+  { label: "Payment method", key: "contact.payment_method", type: "select", options: ["Credit", "Debit", "Bank Account"] },
+  { label: "Services selected", key: "contact.services_selected", type: "text" },
+];
+
 function Section({ label, i, children }) {
   return (
     <div className="fade" style={{ animationDelay: `${i * 60}ms`, marginBottom: 26 }}>
@@ -284,6 +342,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
   const [docPreview, setDocPreview] = useState(null);   // {label} for the OCR preview modal
   const [transcript, setTranscript] = useState(null);   // activity item for transcript modal
   const [chase, setChase] = useState(-1);                // -1 idle; 0..n animating chase steps
+  const [quick, setQuick] = useState(null);              // null=closed; {q, field, value, saved} for Quick Update
 
   useEffect(() => {
     let live = true;
@@ -356,9 +415,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
       <style>{CSS}</style>
       <div className="shell">
         <div className="nav">
-          <span className="brand">JN Insurance</span>
-          <a>Contacts</a><a>Conversations</a><a>Opportunities</a><a>Calendars</a>
-          <span className="user">Yubinka <ChevronDown size={13} /></span>
+          <span className="brand">JN Insurance · Client 360</span>
         </div>
 
         <div className="head">
@@ -372,6 +429,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
             <a className="btn call" href={id.phone ? `tel:${id.phone.replace(/[^0-9+]/g, "")}` : undefined}><Phone size={14} /> Call</a>
             <button className="btn" onClick={openEmail}><Mail size={14} /> Email</button>
             <button className="btn dead" title="WhatsApp integration coming soon"><MessageCircle size={14} /> WApp</button>
+            <button className="btn" onClick={() => setQuick({ q: "", field: null, value: "", saved: false })}><PenLine size={14} /> Quick update</button>
             <button className="btn primary" onClick={() => onAction?.("new_opportunity", c)}><Plus size={14} /> New Opportunity</button>
           </div>
         </div>
@@ -463,15 +521,30 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
               </div>
               {/* Health: real rail. Other lines: vision rail + policy detail. */}
               {health && openCard === health.key && (
-                <div className="rail">
-                  {health.pipeline.stages.map((st, i) => (
-                    <div key={i} className={`step ${st.done ? "done" : ""} ${st.current ? "current" : ""}`}>
-                      {i < health.pipeline.stages.length - 1 && <div className="bar" />}
-                      <div className="node">{st.done ? <Check size={11} /> : null}</div>
-                      <div className="lbl">{st.name}</div>
-                    </div>
-                  ))}
-                </div>
+                <>
+                  <div className="rail">
+                    {health.pipeline.stages.map((st, i) => (
+                      <div key={i} className={`step ${st.done ? "done" : ""} ${st.current ? "current" : ""}`}>
+                        {i < health.pipeline.stages.length - 1 && <div className="bar" />}
+                        <div className="node">{st.done ? <Check size={11} /> : null}</div>
+                        <div className="lbl">{st.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {(() => {
+                    const cur = health.pipeline.stages.find((s) => s.current)?.name
+                      || health.pipeline.stages[health.pipeline.currentIndex]?.name;
+                    const steps = stepsFor("health", cur);
+                    return steps.length ? (
+                      <div className="steps">
+                        <div className="steps-h">Steps to complete · {cur}</div>
+                        {steps.map((s, i) => (
+                          <div className="stepc" key={i}><span className="box" />{s}</div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
+                </>
               )}
               {openCard && openCard !== health?.key && VISION_RAILS[openCard] && (
                 <>
@@ -494,6 +567,18 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
                       ))}
                     </div>
                   )}
+                  {(() => {
+                    const cur = VISION_RAILS[openCard][VISION_RAIL_AT[openCard] ?? 0];
+                    const steps = stepsFor(openCard, cur);
+                    return steps.length ? (
+                      <div className="steps">
+                        <div className="steps-h">Steps to complete · {cur}</div>
+                        {steps.map((s, i) => (
+                          <div className="stepc" key={i}><span className="box" />{s}</div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
                   <div className="foot-note">Vision detail · this line isn’t wired to live data yet</div>
                 </>
               )}
@@ -710,6 +795,56 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
                 <b>Julio:</b> Let’s start with where you are now and what’s changed…<br />
                 <span className="foot-note">Vision · transcripts arrive via GHL Voice + AI in Phase C</span>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK UPDATE (friendly-label field editor; demo save) */}
+      {quick && (
+        <div className="ucv-modal" onClick={(e) => { if (e.target.classList.contains("ucv-modal")) setQuick(null); }}>
+          <div className="ucv-dialog">
+            <div className="ucv-dlg-head">
+              <span>Quick update · {c.firstName} {c.lastName}</span>
+              <button className="ucv-x" onClick={() => setQuick(null)}><X size={16} /></button>
+            </div>
+            <div className="ucv-dlg-body">
+              {quick.saved ? (
+                <div className="ucv-sent"><Check size={15} /> Updated “{quick.field.label}” → {quick.value || "—"}</div>
+              ) : !quick.field ? (
+                <>
+                  <div className="search" style={{ marginBottom: 10 }}>
+                    <Search size={15} />
+                    <input autoFocus placeholder="Search a field to update…" value={quick.q}
+                      onChange={(e) => setQuick((s) => ({ ...s, q: e.target.value }))} />
+                  </div>
+                  <div className="qlist">
+                    {QUICK_FIELDS.filter((f) => f.label.toLowerCase().includes(quick.q.trim().toLowerCase())).map((f) => (
+                      <button className="qrow" key={f.key} onClick={() => setQuick((s) => ({ ...s, field: f, value: "" }))}>
+                        {f.label}<ChevronRight size={13} style={{ color: "var(--muted)" }} />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="ucv-l">{quick.field.label}</label>
+                  {quick.field.type === "select" ? (
+                    <select className="ucv-in" value={quick.value} onChange={(e) => setQuick((s) => ({ ...s, value: e.target.value }))}>
+                      <option value="">— select —</option>
+                      {quick.field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input className="ucv-in" autoFocus value={quick.value} placeholder={`New ${quick.field.label.toLowerCase()}`}
+                      onChange={(e) => setQuick((s) => ({ ...s, value: e.target.value }))} />
+                  )}
+                  <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                    <button className="btn" onClick={() => setQuick((s) => ({ ...s, field: null, value: "" }))}>← Back</button>
+                    <button className="btn primary" disabled={!quick.value} onClick={() => setQuick((s) => ({ ...s, saved: true }))}>Save</button>
+                  </div>
+                  <div className="foot-note" style={{ marginTop: 10 }}>Maps to <code>{quick.field.key}</code> · demo (save is simulated)</div>
+                </>
+              )}
             </div>
           </div>
         </div>
