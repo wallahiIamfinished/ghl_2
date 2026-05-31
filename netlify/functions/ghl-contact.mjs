@@ -215,6 +215,16 @@ export default async (req, context) => {
 
     // real activity timeline (emails + form submissions + notes + tasks)
     const activity = await activityTimeline(loc, id);
+    // DEMO: prepend a sample call summary to show call-logging is possible.
+    // (GHL Voice + AI call summaries are a Phase-C capability; this is a placeholder.)
+    activity.unshift({
+      icon: "call",
+      title: "Call summary · inbound",
+      meta: new Date().toISOString(),
+      body: "8m 42s · Discussed plan options and document needs. Client confirmed income unchanged; interested in adding a dependent. Action: send enrollment docs, follow up in 3 days.",
+      expandable: true,
+      demo: true,
+    });
 
     // identity + immigration
     const dl = g("drivers_license");
