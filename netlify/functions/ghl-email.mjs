@@ -22,7 +22,7 @@ const MSG_VERSION = "2021-04-15";       // conversations send endpoint
 
 /* ◀──────── REPLACE with the sub-account's VERIFIED sending addresses ──────── */
 const FROM_ADDRESSES = [
-  "health@jninsure.com",       // placeholder — replace with a real verified address
+  "osison@cmitsolutions.com",       // placeholder — replace with a real verified address
   "tax@jninsure.com",          // placeholder
   "julio@jninsure.com",        // placeholder
 ];
