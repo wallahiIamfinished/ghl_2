@@ -31,8 +31,11 @@ const F = {
 };
 const DL_OPT = { state: "e0a1bfce-2d60-46c1-af0e-9fdc8cf88d30", exp: "35414f41-c04c-492b-982b-dea0964b4525" };
 
-/* document checklist — present = file-upload field has a value */
-const DOCS = [
+/* Document checklists, per service line.
+   HEALTH_DOCS are REAL — each maps to a file-upload field; present = has value.
+   TAX_DOCS and LIFE_DOCS are STATIC DUMMY (no API) — distinct lists so the demo
+   shows three different gates without implying they're wired. */
+const HEALTH_DOCS = [
   ["Driver's License",            "contact.contactsample_document_k8i_copy"],
   ["Passport photo",              "contact.american_passport_photo"],
   ["Foreign passport",            "contact.foreign_passport_photo"],
@@ -41,6 +44,16 @@ const DOCS = [
   ["I-797 notice of action",      "contact.i797_notice_of_action_if_available"],
   ["Naturalization certificate",  "contact.naturalization_certificate_n550n570"],
   ["Consular ID",                 "contact.front_consular_id_image_upload"],
+];
+// dummy = [label, present] — hardcoded demo state, no lookup
+const TAX_DOCS_DUMMY = [
+  ["W-2 (all employers)", true], ["1099 forms", true], ["Prior-year 1040", true],
+  ["1098 mortgage interest", false], ["Dependent SSNs", true], ["IDs for all filers", false],
+];
+const LIFE_DOCS_DUMMY = [
+  ["Completed application", true], ["Medical exam (paramed)", false],
+  ["Attending Physician Statement (APS)", false], ["Prior policy (if replacement)", false],
+  ["Beneficiary designation", true],
 ];
 
 /* Insurance Workflow (qT9EmKMANkGoTm8IAuQ4) */
@@ -66,11 +79,6 @@ const VISION_CROSSSELL = [
   { sev: "open", title: "Medicare-eligible 2026-12 (turns 64y9m)", detail: "Opportunity auto-created in Medicare pipeline · assigned to Julio · stage 01" },
   { sev: "open", title: "Advisory cross-sell · AGI > threshold AND advisory_status=none", detail: "Opportunity auto-created · assigned to Julio · stage 01 · pending outreach" },
   { sev: "queued", title: "Life gap flag set", detail: "(high income, no Life) · queued behind Advisory · cluster prevents firing twice" },
-];
-const VISION_ACTIVITY = [
-  { icon: "call", title: "Call from Julio", meta: "Today", body: "Discussed coverage options and next steps", expandable: true },
-  { icon: "sign", title: "Adobe Sign envelope completed · engagement letter", meta: "5 days ago", body: "Filed to SharePoint · field updated" },
-  { icon: "flow", title: "Workflow fired · cross-sell trigger", meta: "8 days ago", body: "created opp · scheduled outreach" },
 ];
 
 /* ---- helpers ---- */
@@ -116,36 +124,69 @@ async function idToKey(loc) {
   return m;
 }
 
-// Real EMAIL activity from the Conversations API (best-effort).
-async function emailActivity(loc, contactId) {
+// REAL activity timeline — mirrors the GHL contact record as closely as the
+// public API allows: emails (Conversations), form submissions, notes, tasks.
+// Each source is best-effort and independently try/caught. Site visits/page
+// views are NOT in the public API, so they are not faked here.
+async function activityTimeline(loc, contactId) {
+  const items = [];
+  const push = (icon, title, body, ts, extra = {}) =>
+    items.push({ icon, title, body, meta: ts || "", _ts: Date.parse(ts || 0) || 0, ...extra });
+
+  // 1. Emails (+ calls/SMS/WhatsApp if present) from Conversations
   try {
     const s = await ghl(`/conversations/search?locationId=${loc}&contactId=${contactId}`);
-    const convos = s.conversations || [];
-    const items = [];
-    for (const c of convos.slice(0, 3)) {
+    for (const c of (s.conversations || []).slice(0, 3)) {
       try {
         const m = await ghl(`/conversations/${c.id}/messages`);
         const msgs = m.messages?.messages || m.messages || [];
         for (const msg of msgs) {
           const t = String(msg.messageType || msg.type || "").toUpperCase();
-          if (!t.includes("EMAIL")) continue;
           const out = String(msg.direction || "").toLowerCase() === "outbound";
-          items.push({
-            icon: "email",
-            title: out ? "Email sent to client" : "Email received from client",
-            meta: msg.dateAdded || msg.dateUpdated || "",
-            body: msg.subject || msg.meta?.email?.subject || (msg.body || "").toString().slice(0, 160) || "(email)",
-            expandable: true,
-            _ts: Date.parse(msg.dateAdded || msg.dateUpdated || 0) || 0,
-          });
+          const ts = msg.dateAdded || msg.dateUpdated;
+          if (t.includes("EMAIL"))
+            push("email", out ? "Email sent to client" : "Email from client",
+              msg.subject || msg.meta?.email?.subject || (msg.body || "").toString().slice(0, 160) || "(email)", ts, { expandable: true });
+          else if (t.includes("SMS"))
+            push("sms", out ? "SMS sent" : "SMS received", (msg.body || "").toString().slice(0, 160), ts);
+          else if (t.includes("CALL"))
+            push("call", out ? "Outbound call" : "Inbound call", "Call logged", ts, { expandable: true });
+          else if (t.includes("WHATS"))
+            push("wapp", "WhatsApp message", (msg.body || "").toString().slice(0, 160), ts);
         }
       } catch (_) {}
     }
-    items.sort((a, b) => b._ts - a._ts);
-    return items;
-  } catch (_) {
-    return [];
-  }
+  } catch (_) {}
+
+  // 2. Form submissions (needs the "View Forms" PIT scope)
+  try {
+    const fs = await ghl(`/forms/submissions?locationId=${loc}&contactId=${contactId}&limit=20`);
+    for (const sub of fs.submissions || []) {
+      push("form", `Form submitted · ${sub.formName || sub.name || "intake form"}`,
+        "Captured to contact record", sub.createdAt || sub.dateAdded);
+    }
+  } catch (_) {}
+
+  // 3. Notes
+  try {
+    const n = await ghl(`/contacts/${contactId}/notes`);
+    for (const note of n.notes || []) {
+      push("note", "Note added", (note.body || "").toString().slice(0, 160), note.dateAdded || note.createdAt);
+    }
+  } catch (_) {}
+
+  // 4. Tasks
+  try {
+    const tk = await ghl(`/contacts/${contactId}/tasks`);
+    for (const t of tk.tasks || []) {
+      push("task", `Task · ${t.title || "follow-up"}`,
+        t.completed ? "Completed" : (t.dueDate ? `Due ${String(t.dueDate).slice(0, 10)}` : "Open"),
+        t.dateAdded || t.dateUpdated || t.dueDate);
+    }
+  } catch (_) {}
+
+  items.sort((a, b) => b._ts - a._ts);
+  return items.slice(0, 12);
 }
 
 const oppStage = (o) =>
@@ -172,8 +213,8 @@ export default async (req, context) => {
       opps = oRes.opportunities || [];
     } catch (_) {}
 
-    // real email activity
-    const emails = await emailActivity(loc, id);
+    // real activity timeline (emails + form submissions + notes + tasks)
+    const activity = await activityTimeline(loc, id);
 
     // identity + immigration
     const dl = g("drivers_license");
@@ -230,11 +271,15 @@ export default async (req, context) => {
         dependents: depName ? [{ name: depName, age: g("dep_age") }] : [],
         subsidyHint: subsidy(income, size),
       },
-      documents: DOCS.map(([label, key]) => ({ label, present: !!gv(key) })),
+      documentsByLine: {
+        health: HEALTH_DOCS.map(([label, key]) => ({ label, present: !!gv(key) })),
+        tax:  TAX_DOCS_DUMMY.map(([label, present]) => ({ label, present, dummy: true })),
+        life: LIFE_DOCS_DUMMY.map(([label, present]) => ({ label, present, dummy: true })),
+      },
       serviceLines: [healthCard, ...VISION_CARDS],
       crossSell: VISION_CROSSSELL,
-      activity: [...emails, ...VISION_ACTIVITY],
-      emailCount: emails.length,
+      activity,
+      activityCount: activity.length,
       opportunities: opps.map((o) => ({ line: o.name || "Insurance Workflow", stage: oppStage(o), meta: o.status || "" })),
     });
   } catch (e) {
