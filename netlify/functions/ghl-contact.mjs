@@ -57,10 +57,10 @@ const LIFE_DOCS_DUMMY = [
 ];
 
 /* Insurance Workflow (qT9EmKMANkGoTm8IAuQ4) */
-const HEALTH_STAGE_NAMES = ["Document Collection", "Documents Complete", "Enrollment", "Closed"];
+const HEALTH_STAGE_NAMES = ["Document Verification", "Quoting", "Enrollment", "Closed"];
 const HEALTH_STAGES = {
-  "31b7a48e-3996-4f51-8740-d45de7d6649b": "Document Collection",
-  "ef01de2c-edf6-4944-8371-284637c2a91c": "Documents Complete",
+  "31b7a48e-3996-4f51-8740-d45de7d6649b": "Document Verification",
+  "ef01de2c-edf6-4944-8371-284637c2a91c": "Quoting",
   "4dbeca01-0e50-4117-99bd-a640245eed56": "Enrollment",
   "80e42234-52b3-48f3-8e8f-a7ba2e6431f1": "Closed",
 };
