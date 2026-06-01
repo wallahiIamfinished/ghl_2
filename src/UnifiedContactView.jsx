@@ -66,7 +66,7 @@ const MOCK = {
   serviceLines: [
     { key: "health", label: "Health / ACA", state: "pending", detail: "Enrollment", sub: "Insurance Workflow",
       pipeline: { oppName: "Insurance Workflow", currentIndex: 2,
-        stages: [{ name: "Document Collection", done: true }, { name: "Documents Complete", done: true },
+        stages: [{ name: "Document Verification", done: true }, { name: "Quoting", done: true },
                  { name: "Enrollment", current: true }, { name: "Closed" }] } },
     { key: "medicare", label: "Medicare", state: "crosssell", detail: "Cross-sell triggered", sub: "Eligible 2026-12 · opp open" },
     { key: "life", label: "Life Insurance", state: "none", detail: "Not engaged", sub: "life_gap flag set" },
@@ -286,10 +286,10 @@ const chaseSteps = ["Sending SMS + email with secure upload link…", "Reminder 
 // Insurance Workflow stage names.
 const STAGE_STEPS = {
   health: {
-    "Document Collection": ["Send secure upload link", "Collect ID + proof of income", "Verify citizenship/immigration docs", "Confirm household + dependents"],
-    "Documents Complete": ["Review all docs for completeness", "Run subsidy/eligibility check", "Confirm plan preferences with client"],
-    "Enrollment": ["Submit application on GetCoveredNJ", "Capture confirmation #", "Send welcome + ID card info", "Schedule effectuation check"],
-    "Closed": ["Confirm coverage effectuated", "File final docs", "Set renewal reminder (AEP)"],
+    "Document Verification": ["Send secure upload link (replaces WhatsApp photos)", "Collect + verify DL / ID", "Verify income proof + citizenship / green card", "Confirm household size + dependents"],
+    "Quoting": ["Run subsidy / APTC eligibility from income", "Pull plan options on GetCoveredNJ", "Present plan comparison to client", "Confirm plan selection"],
+    "Enrollment": ["Submit application on GetCoveredNJ", "Capture application / confirmation #", "Collect consent + carrier e-sign", "Send welcome + ID card info"],
+    "Closed": ["Confirm coverage effectuated", "File final docs to SharePoint", "Set renewal reminder (AEP)", "Flag cross-sell signals (Tax, Life, Advisory)"],
   },
   medicare: { default: ["Confirm eligibility date", "Run Sunfire quote", "Complete Scope of Appointment", "Submit application"] },
   life: { default: ["Fact-find + needs analysis", "Collect UW docs", "Order paramed exam", "Submit application"] },
@@ -687,7 +687,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
                 )}
                 <div className="foot-note">
                   {docLine === "health"
-                    ? "Live from uploaded files · feeds the Document Collection gate"
+                    ? "Live from uploaded files · feeds the Document Verification gate"
                     : "Sample checklist · not yet wired to uploads"}
                 </div>
               </div>
