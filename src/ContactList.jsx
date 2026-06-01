@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, ChevronRight, Bell, Building2, Users, LineChart } from "lucide-react";
+import { Search, ChevronRight, Bell, Building2, Users, LineChart, X } from "lucide-react";
 import Growth from "./Growth";
 
 const CSS = `
@@ -48,17 +48,45 @@ const CSS = `
 .cl .tags{margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;}
 .cl .tag{font-size:10px;color:var(--teal);background:rgba(31,77,74,.08);border-radius:4px;padding:2px 7px;}
 .cl .chev{color:var(--muted);flex:0 0 auto;}
+.cl .fchip.newview{border-style:dashed;color:var(--teal);font-weight:600;}
+.cl .fchip.newview:hover{background:rgba(31,77,74,.06);}
+.cl .fchip .demo:last-child{}
+.cl-modal{position:fixed;inset:0;background:rgba(26,26,26,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;}
+.cl-dialog{background:#fff;border-radius:8px;width:460px;max-width:100%;max-height:88vh;overflow:auto;font-family:var(--sans);color:var(--ink);}
+.cl-dlg-head{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line);font-family:var(--serif);font-size:17px;}
+.cl-x{background:none;border:0;cursor:pointer;color:var(--muted);display:flex;}
+.cl-dlg-body{padding:16px 18px;}
+.cl-l{display:block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 5px;}
+.cl-l .muted2{text-transform:none;letter-spacing:0;font-size:10.5px;}
+.cl-in{width:100%;border:1px solid var(--line);border-radius:5px;padding:8px 10px;font-size:13px;font-family:var(--sans);color:var(--ink);}
+.cond-row{display:flex;gap:7px;align-items:center;margin-bottom:7px;}
+.cl-sel{border:1px solid var(--line);border-radius:5px;padding:7px 9px;font-size:12.5px;font-family:var(--sans);background:#fff;color:var(--ink);}
+.cl-sel.grow{flex:1;}
+.cond-x{background:none;border:0;color:var(--muted);cursor:pointer;display:flex;}.cond-x:hover{color:var(--rust);}
+.addcond{background:none;border:1px dashed var(--line);border-radius:5px;padding:6px 11px;font-size:11.5px;color:var(--ink2);cursor:pointer;font-family:var(--sans);margin-top:3px;}
+.addcond:hover{border-color:var(--teal);color:var(--teal);}
+.cl-preview{margin-top:14px;background:rgba(31,77,74,.05);border-radius:6px;padding:9px 12px;font-size:12.5px;color:var(--ink2);}
+.cl-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;}
+.cl-btn{padding:7px 14px;border-radius:5px;border:1px solid var(--line);background:#fff;font-size:12.5px;cursor:pointer;font-family:var(--sans);color:var(--ink);}
+.cl-btn.primary{background:var(--teal);color:#F4F1E8;border-color:var(--teal);}
+.cl-btn:disabled{opacity:.5;cursor:not-allowed;}
+.cl-foot{font-size:10.5px;color:var(--muted);font-style:italic;margin-top:10px;}
 @media(max-width:680px){.cl .roll{grid-template-columns:repeat(2,1fr);}}
 `;
 
 // Cross-line filter views (Julio's north star) — vision toggles
-const FILTERS = [
-  { key: "all", label: "All clients" },
-  { key: "health_no_tax", label: "Health · no Tax", demo: true },
-  { key: "medicare_no_life", label: "Medicare · no Life", demo: true },
-  { key: "tax_no_advisory", label: "Tax · no Advisory", demo: true },
-  { key: "pc_eligible", label: "P&C eligible", demo: true },
+const LINES = ["Health", "Medicare", "Life", "Group", "Tax", "Bookkeeping", "Advisory", "P&C"];
+
+// Built-in preset views, expressed as condition lists (same engine as custom views).
+// A condition: { line, op: "has" | "missing" }. A client matches if ALL conditions hold.
+const PRESETS = [
+  { key: "all", label: "All clients", conds: [] },
+  { key: "health_no_tax", label: "Health · no Tax", demo: true, conds: [{ line: "Health", op: "has" }, { line: "Tax", op: "missing" }] },
+  { key: "medicare_no_life", label: "Medicare · no Life", demo: true, conds: [{ line: "Medicare", op: "has" }, { line: "Life", op: "missing" }] },
+  { key: "tax_no_advisory", label: "Tax · no Advisory", demo: true, conds: [{ line: "Tax", op: "has" }, { line: "Advisory", op: "missing" }] },
+  { key: "pc_eligible", label: "P&C eligible", demo: true, conds: [{ line: "P&C", op: "missing" }] },
 ];
+
 const NOTIFICATIONS = [
   "3 documents received today",
   "2 cross-sell opportunities triggered",
@@ -68,11 +96,26 @@ const NOTIFICATIONS = [
 const initials = (n) =>
   (n || "?").split(/\s+/).slice(0, 2).map((x) => x[0] || "").join("").toUpperCase();
 
-// stable small hash of an id string, for deterministic vision filter subsets
+// stable hash of an id string
 function hashId(id) {
   let h = 0; const s = String(id || "");
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h;
+}
+// MODELED: which lines a client "has", derived deterministically from their id.
+// (Demo stand-in until real per-line status fields exist in GHL.)
+function clientLines(id) {
+  const h = hashId(id);
+  const set = new Set();
+  LINES.forEach((l, i) => { if ((h >> i) & 1) set.add(l); });
+  if (!set.size) set.add("Health");           // everyone has at least one
+  return set;
+}
+// evaluate a condition list against a client
+function matchesConds(id, conds) {
+  if (!conds || !conds.length) return true;
+  const lines = clientLines(id);
+  return conds.every((c) => c.op === "has" ? lines.has(c.line) : !lines.has(c.line));
 }
 
 export default function ContactList({ locationId, onSelect }) {
@@ -80,9 +123,11 @@ export default function ContactList({ locationId, onSelect }) {
   const [err, setErr] = useState(null);
   const [q, setQ] = useState("");
   const [entity, setEntity] = useState("all");   // all | insurance | consulting (vision)
-  const [filter, setFilter] = useState("all");    // cross-line filter view (vision)
+  const [filter, setFilter] = useState("all");    // active view key
   const [bellOpen, setBellOpen] = useState(false);
   const [tab, setTab] = useState("clients");      // clients | growth
+  const [customViews, setCustomViews] = useState([]); // [{key,label,conds}]
+  const [builder, setBuilder] = useState(null);   // null=closed; {name, conds:[{line,op}]}
 
   useEffect(() => {
     let live = true;
@@ -93,17 +138,17 @@ export default function ContactList({ locationId, onSelect }) {
     return () => { live = false; };
   }, [locationId]);
 
-  // text search (real) + cross-line filter view (vision: deterministic subset by id hash)
+  const allViews = useMemo(() => [...PRESETS, ...customViews], [customViews]);
+
+  // text search (real) + active view conditions (modeled per-line attributes)
   const filtered = useMemo(() => {
     const base = rows || [];
     const s = q.trim().toLowerCase();
     const bySearch = !s ? base : base.filter((c) =>
       [c.name, c.email, c.phone, (c.tags || []).join(" ")].join(" ").toLowerCase().includes(s));
-    if (filter === "all") return bySearch;
-    // vision: pick a stable pseudo-subset so each filter shows a different, consistent slice
-    const mod = { health_no_tax: 0, medicare_no_life: 1, tax_no_advisory: 2, pc_eligible: 3 }[filter] ?? 0;
-    return bySearch.filter((c) => (hashId(c.id) % 3) === (mod % 3));
-  }, [rows, q, filter]);
+    const view = allViews.find((v) => v.key === filter) || allViews[0];
+    return bySearch.filter((c) => matchesConds(c.id, view.conds));
+  }, [rows, q, filter, allViews]);
 
   // rollup stats — counts are real off loaded rows; pipeline value/conversion are vision
   const total = (rows || []).length;
@@ -170,13 +215,16 @@ export default function ContactList({ locationId, onSelect }) {
           <input placeholder="Search name, email, phone, tag…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
 
-        {/* Cross-line filter views (Julio's north star) */}
+        {/* Cross-line filter views (Julio's north star) — presets + custom */}
         <div className="filters">
-          {FILTERS.map((f) => (
+          {allViews.map((f) => (
             <button key={f.key} className={`fchip ${filter === f.key ? "on" : ""}`} onClick={() => setFilter(f.key)}>
-              {f.label}{f.demo && <span className="demo">demo</span>}
+              {f.label}{f.demo && <span className="demo">demo</span>}{f.custom && <span className="demo">custom</span>}
             </button>
           ))}
+          <button className="fchip newview" onClick={() => setBuilder({ name: "", conds: [{ line: "Health", op: "has" }] })}>
+            + New view
+          </button>
         </div>
 
         {err && <div className="msg">Couldn’t load contacts: {err}</div>}
@@ -203,6 +251,58 @@ export default function ContactList({ locationId, onSelect }) {
         </>
         )}
       </div>
+
+      {/* CUSTOM VIEW BUILDER */}
+      {builder && (
+        <div className="cl-modal" onClick={(e) => { if (e.target.classList.contains("cl-modal")) setBuilder(null); }}>
+          <div className="cl-dialog">
+            <div className="cl-dlg-head">
+              <span>Build a custom view</span>
+              <button className="cl-x" onClick={() => setBuilder(null)}><X size={16} /></button>
+            </div>
+            <div className="cl-dlg-body">
+              <label className="cl-l">View name</label>
+              <input className="cl-in" autoFocus placeholder="e.g. Group clients approaching Medicare"
+                value={builder.name} onChange={(e) => setBuilder((b) => ({ ...b, name: e.target.value }))} />
+
+              <label className="cl-l">Conditions <span className="muted2">— client matches when all are true</span></label>
+              {builder.conds.map((cond, i) => (
+                <div className="cond-row" key={i}>
+                  <select className="cl-sel" value={cond.op}
+                    onChange={(e) => setBuilder((b) => ({ ...b, conds: b.conds.map((x, j) => j === i ? { ...x, op: e.target.value } : x) }))}>
+                    <option value="has">Has</option>
+                    <option value="missing">Doesn't have</option>
+                  </select>
+                  <select className="cl-sel grow" value={cond.line}
+                    onChange={(e) => setBuilder((b) => ({ ...b, conds: b.conds.map((x, j) => j === i ? { ...x, line: e.target.value } : x) }))}>
+                    {LINES.map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                  {builder.conds.length > 1 && (
+                    <button className="cond-x" onClick={() => setBuilder((b) => ({ ...b, conds: b.conds.filter((_, j) => j !== i) }))}><X size={13} /></button>
+                  )}
+                </div>
+              ))}
+              <button className="addcond" onClick={() => setBuilder((b) => ({ ...b, conds: [...b.conds, { line: "Tax", op: "missing" }] }))}>+ Add condition</button>
+
+              {/* live preview count */}
+              <div className="cl-preview">
+                Matches now: <b>{(rows || []).filter((c) => matchesConds(c.id, builder.conds)).length}</b> of {(rows || []).length} clients
+              </div>
+
+              <div className="cl-actions">
+                <button className="cl-btn" onClick={() => setBuilder(null)}>Cancel</button>
+                <button className="cl-btn primary" disabled={!builder.name.trim()}
+                  onClick={() => {
+                    const key = "cv_" + Date.now();
+                    setCustomViews((v) => [...v, { key, label: builder.name.trim(), conds: builder.conds, custom: true }]);
+                    setFilter(key); setBuilder(null);
+                  }}>Save view</button>
+              </div>
+              <div className="cl-foot">Saved for this session · runs on modeled per-line data until real status fields are wired.</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
