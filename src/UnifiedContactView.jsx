@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Phone, MessageCircle, Mail, Plus, Play, FileText, PenLine, Zap,
   Flag, Search, ChevronRight, Check, X,
-  ClipboardList, StickyNote, CheckSquare, MessageSquare,
+  ClipboardList, StickyNote, CheckSquare, MessageSquare, Clock, RefreshCw,
 } from "lucide-react";
 
 /* ============================================================================
@@ -37,14 +37,18 @@ const MOCK = {
   clientOf: ["JN Insurance", "JN Consulting"], source: "BNI referral via L. Saavedra",
   identity: {
     phone: "(201) 555-0142", email: "m.gonzalez@email.com", ssnMasked: "***-**-1234",
+    itin: "9XX-7X-XXXX", businessName: "Gonzalez Cleaning Services LLC", sex: "F",
     dlState: "NJ", dlExp: "2028", address: "412 Anderson St, Hackensack NJ 07601",
     citizenship: "US Citizen (naturalized)", inUsSince: "28 yrs",
     immigration: { status: "Naturalized", path: "Naturalized Citizen", years: "28" },
   },
   household: {
     maritalStatus: "Married", spouse: { name: "Roberto", age: "61" }, size: "4 (incl. 2 dependents)",
-    income: "$94,500", dependents: [{ name: "Sofia", age: "17" }],
+    income: "$94,500", employment: "Self-employed (business owner)", paymentMethod: "Bank Account",
+    incomeBreakdown: { primary: "$94,500", spouse: "$38,000", dependent: "$0", total: "$132,500" },
+    dependents: [{ name: "Sofia", age: "17", income: "$0" }, { name: "Luis", age: "14" }],
     subsidyHint: "~218% FPL · subsidy-eligible (est.)",
+    lastVerified: "2026-05-20",
   },
   documentsByLine: {
     health: [
@@ -67,7 +71,19 @@ const MOCK = {
     { key: "health", label: "Health / ACA", state: "pending", detail: "Enrollment", sub: "Insurance Workflow",
       pipeline: { oppName: "Insurance Workflow", currentIndex: 2,
         stages: [{ name: "Document Verification", done: true }, { name: "Quoting", done: true },
-                 { name: "Enrollment", current: true }, { name: "Closed" }] } },
+                 { name: "Enrollment", current: true }, { name: "Closed" }] },
+      healthDetail: {
+        computed: { subsidy: "~218% FPL · subsidy-eligible (est.)", csr: "CSR 73% (Silver) — eligible",
+          netPremium: { gross: "$472", aptc: "$331", net: "$141" } },
+        carrier: "Horizon BCBS NJ", metalTier: "Silver", planName: "Horizon Silver OMNIA",
+        deductible: "$3,500 / $7,000 MOOP",
+        effectuation: "Enrolled — first premium PAID (effectuated)",
+        enrollmentWindow: "Open Enrollment · closes 2026-01-15", sepDaysLeft: 0,
+        reconRisk: "Income matches attestation — no 1095-A risk",
+        coveredMembers: "Self + 1 dependent on plan; spouse on Medicare",
+        lastLifeEvent: "—", applicationId: "GCNJ-APP-44821",
+        gcnjStatus: "Effectuated · active 2026 coverage", planExpiry: "2026-12-31",
+      } },
     { key: "medicare", label: "Medicare", state: "crosssell", detail: "Cross-sell triggered", sub: "Eligible 2026-12 · opp open" },
     { key: "life", label: "Life Insurance", state: "none", detail: "Not engaged", sub: "life_gap flag set" },
     { key: "group", label: "Group / Ancillary", state: "na", detail: "N/A — self-employed", sub: "(employees = 0)" },
@@ -211,6 +227,35 @@ const CSS = `
 .ucv .misc-x:hover{color:var(--rust);}
 .ucv .addmisc{display:inline-flex;align-items:center;gap:5px;background:none;border:1px dashed var(--line);border-radius:5px;padding:5px 10px;margin-top:9px;font-size:11px;color:var(--ink2);cursor:pointer;font-family:var(--sans);}
 .ucv .addmisc:hover{border-color:var(--teal);color:var(--teal);}
+.ucv .sec-sub{font-size:11px;font-weight:600;color:var(--ink2);margin:0 0 7px;display:flex;align-items:center;gap:6px;}
+.ucv .sec-sub .sub-note{font-weight:400;color:var(--muted);font-size:10.5px;}
+.ucv .flagrow{display:flex;gap:11px;padding:11px 14px;border-bottom:1px solid var(--line);align-items:flex-start;}
+.ucv .flagrow:last-child{border-bottom:none;}
+.ucv .flagrow.dismissed{opacity:.55;}
+.ucv .flagrow .ic{flex:0 0 auto;margin-top:1px;}
+.ucv .flagrow .ti{font-size:12px;font-weight:600;}
+.ucv .flagrow .de{font-size:11px;color:var(--ink2);margin-top:2px;}
+.ucv .flagrow .basis{font-size:10px;color:var(--muted);margin-top:2px;font-family:monospace;}
+.ucv .conf{font-size:8.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:3px;margin-left:6px;}
+.ucv .conf.high{background:rgba(74,93,44,.14);color:var(--olive);}
+.ucv .conf.medium{background:rgba(139,105,20,.14);color:var(--ochre);}
+.ucv .flagbtns{display:flex;gap:6px;flex:0 0 auto;}
+.ucv .xs-btn{padding:4px 9px;font-size:11px;}
+.ucv .resolved{font-size:11px;display:flex;align-items:center;gap:4px;flex:0 0 auto;}
+.ucv .resolved.ok{color:var(--olive);}.ucv .resolved.no{color:var(--muted);}
+.ucv .linklike{background:none;border:0;color:var(--teal);cursor:pointer;font-size:11px;padding:0;text-decoration:underline;font-family:var(--sans);}
+.ucv .card.auto{background:rgba(31,77,74,.03);}
+.ucv .autorow{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;}
+.ucv .autorow:last-child{border-bottom:none;}
+.ucv .autorow .ti{font-weight:600;}.ucv .autorow .de{color:var(--ink2);font-size:11.5px;}
+.ucv .autodot{width:7px;height:7px;border-radius:50%;background:var(--olive);flex:0 0 auto;box-shadow:0 0 0 3px rgba(74,93,44,.15);}
+.ucv .when{font-size:10px;color:var(--muted);flex:0 0 auto;}
+.ucv .lastver{font-size:10.5px;color:var(--muted);margin-top:10px;padding-top:9px;border-top:1px solid var(--line);}
+.ucv .hdetail{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.ucv .hd-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 16px;}
+.ucv .hd-grid .k{font-size:10px;color:var(--muted);}
+.ucv .hd-grid .v{font-size:12px;margin-top:1px;}
+.ucv .hd-alert{grid-column:1 / -1;display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--rust);background:rgba(168,68,47,.08);border:1px solid rgba(168,68,47,.25);border-radius:5px;padding:6px 10px;}
 .ucv .docrow{cursor:pointer;}
 .ucv .ocr{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;margin-top:10px;}
 .ucv .ocr .kk{color:var(--muted);}
@@ -268,6 +313,23 @@ const CROSS_SELL_RULES = [
   { from: "Advisory", to: "Life", cond: "plan delivered AND life gap flag set", owner: "Julio", state: "monitoring" },
   { from: "Advisory", to: "Medicare", cond: "plan delivered AND dob + 64y9m within 24mo", owner: "Julio", state: "monitoring" },
   { from: "Any line", to: "P&C", cond: "P&C activated AND client has property / vehicle / business", owner: "P&C lead", state: "monitoring" },
+];
+
+// TIER 1 — automated, runs in background. 100% accurate, date-driven, no
+// confusion risk. Shown as "running automatically" (logged, not an action item).
+const AUTO_FLAGS = [
+  { label: "Birthday follow-up", detail: "Sends on client birthday · bilingual", when: "next: in 3 weeks" },
+  { label: "Plan renewal / AEP reminder", detail: "Fires 45 days before plan year end", when: "next: 2026-11-16" },
+  { label: "Policy-expiry nudge", detail: "Health plan expires 2026-12-31", when: "scheduled" },
+  { label: "Effectuation confirmation", detail: "Confirms first-premium payment after enrollment", when: "complete" },
+];
+// TIER 2 — inferred from intake-trait intersections. PROBABILISTIC → must be
+// human-verified. Yubinka reviews, follows up, then confirms or dismisses.
+const SUGGESTED_FLAGS = [
+  { id: "adv", to: "Advisory", reason: "Tax AGI > threshold AND no advisory engagement", basis: "Income + services on file", conf: "high" },
+  { id: "med", to: "Medicare", reason: "Approaching age 64¾ within 18 months", basis: "DOB", conf: "high" },
+  { id: "life", to: "Life", reason: "High income, dependents, no Life policy", basis: "Income + dependents + lines", conf: "medium" },
+  { id: "tax", to: "Tax", reason: "Health effectuated, income collected, no Tax engagement", basis: "Health intake income", conf: "medium" },
 ];
 const COMPLIANCE = [
   { label: "HHS consent", ok: true }, { label: "GLBA privacy notice", ok: true },
@@ -351,6 +413,7 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
   const [chase, setChase] = useState(-1);                // -1 idle; 0..n animating chase steps
   const [quick, setQuick] = useState(null);              // null=closed; {q, field, value, saved} for Quick Update
   const [miscDocs, setMiscDocs] = useState({});          // { [line]: [{label, checked}] } edge-case docs
+  const [flagState, setFlagState] = useState({});         // { [id]: 'confirmed' | 'dismissed' } cross-sell review
 
   useEffect(() => {
     let live = true;
@@ -475,10 +538,13 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
                 <div className="sec-label">Identity · Block A + B</div>
                 <div className="card">
                   <div className="kv">
+                    {id.businessName && <div style={{ gridColumn: "1 / -1" }}><div className="k">Business</div><div className="v">{id.businessName}</div></div>}
                     <div><div className="k">Phone</div><div className="v">{id.phone || "—"}</div></div>
                     <div><div className="k">Email</div><div className="v">{id.email || "—"}</div></div>
                     <div><div className="k">SSN</div><div className="v">{id.ssnMasked} <span className="tag">(masked)</span></div></div>
+                    <div><div className="k">ITIN</div><div className="v">{id.itin || "—"}</div></div>
                     <div><div className="k">Driver's License</div><div className="v">{[id.dlState, id.dlExp && `exp ${id.dlExp}`].filter(Boolean).join(" · ") || "—"}</div></div>
+                    <div><div className="k">Sex</div><div className="v">{id.sex || "—"}</div></div>
                     <div style={{ gridColumn: "1 / -1" }}><div className="k">Address</div><div className="v">{id.address || "—"}</div></div>
                     <div><div className="k">Citizenship</div><div className="v">{id.citizenship || "—"}</div></div>
                     <div><div className="k">In US since</div><div className="v">{id.inUsSince || "—"}</div></div>
@@ -500,10 +566,24 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
                   <div className="kv">
                     <div><div className="k">Marital status</div><div className="v">{h.maritalStatus || "—"}{h.spouse ? ` · spouse ${h.spouse.name}${h.spouse.age ? ` (${h.spouse.age})` : ""}` : ""}</div></div>
                     <div><div className="k">Household size</div><div className="v">{h.size || "—"}</div></div>
-                    <div><div className="k">Annual income</div><div className="v">{h.income || "—"}</div></div>
-                    <div><div className="k">Dependents</div><div className="v">{h.dependents?.length ? h.dependents.map((d) => `${d.name}${d.age ? ` (${d.age})` : ""}`).join(", ") : "—"}</div></div>
+                    <div><div className="k">Employment</div><div className="v">{h.employment || "—"}</div></div>
+                    <div><div className="k">Payment method</div><div className="v">{h.paymentMethod || "—"}</div></div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div className="k">Income breakdown</div>
+                      <div className="v">
+                        {h.incomeBreakdown?.primary ? `Primary ${h.incomeBreakdown.primary}` : "—"}
+                        {h.incomeBreakdown?.spouse ? ` · Spouse ${h.incomeBreakdown.spouse}` : ""}
+                        {h.incomeBreakdown?.dependent ? ` · Dependent ${h.incomeBreakdown.dependent}` : ""}
+                        {h.incomeBreakdown?.total ? <span className="tag"> · total {h.incomeBreakdown.total}</span> : ""}
+                      </div>
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div className="k">Dependents</div>
+                      <div className="v">{h.dependents?.length ? h.dependents.map((d) => `${d.name}${d.age ? ` (${d.age})` : ""}${d.income ? ` · ${d.income}` : ""}`).join(", ") : "—"}</div>
+                    </div>
                   </div>
                   {h.subsidyHint && <div className="hint">↳ ACA subsidy: {h.subsidyHint}</div>}
+                  <div className="lastver">Last verified: {h.lastVerified || "—"}</div>
                 </div>
               </div>
             </div>
@@ -552,6 +632,31 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
                       </div>
                     ) : null;
                   })()}
+                  {health.healthDetail && (() => {
+                    const hd = health.healthDetail, cm = hd.computed || {};
+                    return (
+                      <div className="hdetail">
+                        <div className="steps-h">Health / ACA detail</div>
+                        <div className="hd-grid">
+                          {hd.sepDaysLeft > 0 && <div className="hd-alert"><Clock size={12} /> SEP closes in {hd.sepDaysLeft} days</div>}
+                          <div><div className="k">Enrollment window</div><div className="v">{hd.enrollmentWindow || "—"}</div></div>
+                          <div><div className="k">Effectuation</div><div className="v">{hd.effectuation || "—"}</div></div>
+                          <div><div className="k">Plan</div><div className="v">{[hd.carrier, hd.metalTier].filter(Boolean).join(" · ") || "—"}</div></div>
+                          <div><div className="k">Deductible / MOOP</div><div className="v">{hd.deductible || "—"}</div></div>
+                          <div><div className="k">Premium (gross / APTC / net)</div><div className="v">{cm.netPremium ? `${cm.netPremium.gross} / −${cm.netPremium.aptc} / ${cm.netPremium.net}` : "—"} <span className="tag">computed</span></div></div>
+                          <div><div className="k">CSR eligibility</div><div className="v">{cm.csr || "—"} <span className="tag">computed</span></div></div>
+                          <div><div className="k">Subsidy (FPL)</div><div className="v">{cm.subsidy || "—"} <span className="tag">computed</span></div></div>
+                          <div><div className="k">APTC reconciliation</div><div className="v">{hd.reconRisk || "—"}</div></div>
+                          <div><div className="k">Covered members</div><div className="v">{hd.coveredMembers || "—"}</div></div>
+                          <div><div className="k">Last life event</div><div className="v">{hd.lastLifeEvent || "—"}</div></div>
+                          <div><div className="k">Application / confirmation #</div><div className="v">{hd.applicationId || "—"}</div></div>
+                          <div><div className="k">GetCoveredNJ status</div><div className="v">{hd.gcnjStatus || "—"}</div></div>
+                          <div><div className="k">Plan expires</div><div className="v">{hd.planExpiry || "—"}</div></div>
+                        </div>
+                        <div className="foot-note">Computed fields are real (income + size). Plan, effectuation, SEP, app # and GetCoveredNJ status are agent-entered / GetCoveredNJ-sourced (no API) — shown as demo values.</div>
+                      </div>
+                    );
+                  })()}
                 </>
               )}
               {openCard && openCard !== health?.key && VISION_RAILS[openCard] && (
@@ -593,21 +698,51 @@ export default function UnifiedContactView({ contactId = "demo", adapter = mockA
             </div>
           </Section>
 
-          {/* CROSS-SELL — 16-rule engine (vision) */}
-          <Section label="Cross-sell Engine · Block E · 16 rules" i={2}>
-            <div className="xs">
-              {CROSS_SELL_RULES.map((r, i) => (
-                <div className="rule" key={i}>
-                  <span className="lob">{r.from}</span>
-                  <ChevronRight size={12} className="arrow" />
-                  <span className="lob">{r.to}</span>
-                  <span className="cond">{r.cond}</span>
-                  <span className="om" style={{ fontSize: 10, color: "var(--muted)" }}>{r.owner}</span>
-                  <span className={`badge ${r.state}`}>{r.state}</span>
+          {/* CROSS-SELL — two tiers by confidence */}
+          <Section label="Cross-sell · Block E" i={2}>
+            {/* Tier 2: suggested, human-verified review queue */}
+            <div className="sec-sub">Suggested · needs review <span className="sub-note">inferred from intake — verify before acting</span></div>
+            <div className="xs" style={{ marginBottom: 14 }}>
+              {SUGGESTED_FLAGS.map((f) => {
+                const st = flagState[f.id];
+                return (
+                  <div className={`flagrow ${st || ""}`} key={f.id}>
+                    <Flag size={14} className="ic" style={{ color: st === "dismissed" ? "var(--muted)" : "var(--rust)" }} />
+                    <div style={{ flex: 1 }}>
+                      <div className="ti">Possible {f.to} cross-sell <span className={`conf ${f.conf}`}>{f.conf} confidence</span></div>
+                      <div className="de">{f.reason}</div>
+                      <div className="basis">basis: {f.basis}</div>
+                    </div>
+                    {st === "confirmed" ? (
+                      <span className="resolved ok"><Check size={12} /> Confirmed — opp created</span>
+                    ) : st === "dismissed" ? (
+                      <span className="resolved no">Dismissed · <button className="linklike" onClick={() => setFlagState((s) => ({ ...s, [f.id]: undefined }))}>undo</button></span>
+                    ) : (
+                      <div className="flagbtns">
+                        <button className="btn xs-btn" onClick={() => onAction?.("followup", { flag: f, contact: c })}>Follow up</button>
+                        <button className="btn xs-btn" onClick={() => setFlagState((s) => ({ ...s, [f.id]: "dismissed" }))}>Dismiss</button>
+                        <button className="btn primary xs-btn" onClick={() => setFlagState((s) => ({ ...s, [f.id]: "confirmed" }))}>Confirm</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Tier 1: automated, runs in background */}
+            <div className="sec-sub"><RefreshCw size={11} style={{ verticalAlign: "middle" }} /> Running automatically <span className="sub-note">100% accurate · no review needed</span></div>
+            <div className="card auto">
+              {AUTO_FLAGS.map((a, i) => (
+                <div className="autorow" key={i}>
+                  <span className="autodot" />
+                  <div style={{ flex: 1 }}>
+                    <span className="ti">{a.label}</span>
+                    <span className="de"> — {a.detail}</span>
+                  </div>
+                  <span className="when"><Clock size={10} style={{ verticalAlign: "middle" }} /> {a.when}</span>
                 </div>
               ))}
             </div>
-            <div className="foot-note">Rules fire on system events / daily computed conditions · vision</div>
           </Section>
 
           {/* RECENT ACTIVITY — real timeline: emails, forms, notes, tasks */}
