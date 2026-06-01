@@ -18,15 +18,23 @@ const VERSION  = "2021-07-28";
 /* ---- field map (real keys for location 5awBlPxYQVQGyd1XudNB) ---- */
 const F = {
   middle_name: "contact.middle_name", sex: "contact.sex",
-  ssn: "contact.social_security_numberssn", drivers_license: "contact.drivers_license",
+  ssn: "contact.social_security_numberssn", itin: "contact.individual_tax_id_numberitin",
+  drivers_license: "contact.drivers_license",
   language: "contact.language", referred_by: "contact.referred_by",
+  // business_name has NO confirmed key in the current GHL export — set this to the
+  // real fieldKey once the field exists in GHL, else it stays blank (agent-entered).
+  business_name: "contact.business_name",
   is_citizen: "contact.are_you_a_us_citizen", citizenship_path: "contact.how_did_you_obtain_citizenship",
   years_in_us: "contact.years_in_us", immigration_status: "contact.immigration_status_number",
   visa_type: "contact.visa_type", visa_exp: "contact.visa_expiration",
   alien_number: "contact.alien_number", ead: "contact.ead_category_0", asylee: "contact.asylee_status",
   marital: "contact.marital_status", income: "contact.annual_income",
   spouse_name: "contact.spouse_name", spouse_age: "contact.spouse_age",
+  spouse_income: "contact.spouse_yearly_income",
   has_deps: "contact.dependents", dep_name: "contact.dependent_name", dep_age: "contact.dependent_age",
+  dep_income: "contact.dependent_yearly_income",
+  employment: "contact.employment", // best-effort; may not exist — falls back gracefully
+  payment_method: "contact.payment_method",
   services: "contact.services_selected",
 };
 const DL_OPT = { state: "e0a1bfce-2d60-46c1-af0e-9fdc8cf88d30", exp: "35414f41-c04c-492b-982b-dea0964b4525" };
@@ -109,12 +117,36 @@ function composite(val, optId, labelRe) {
 }
 
 // 2025 FPL (48 states): $15,060 + $5,380 per extra person. ACA subsidy band 100–400%.
-function subsidy(income, size) {
-  if (!income || !size) return undefined;
+function fplPct(income, size) {
+  if (!income || !size) return null;
   const fpl = 15060 + (size - 1) * 5380;
-  const pct = Math.round((income / fpl) * 100);
+  return Math.round((income / fpl) * 100);
+}
+function subsidy(income, size) {
+  const pct = fplPct(income, size);
+  if (pct == null) return undefined;
   const band = pct >= 100 && pct <= 400 ? "subsidy-eligible" : pct < 100 ? "below 100% FPL" : "above 400% FPL";
   return `~${pct}% FPL · ${band} (est.)`;
+}
+// CSR (Cost-Sharing Reductions) — Silver plans only, by FPL band. COMPUTED/real-ish.
+function csrTier(income, size) {
+  const pct = fplPct(income, size);
+  if (pct == null) return undefined;
+  if (pct <= 150) return "CSR 94% (Silver) — eligible";
+  if (pct <= 200) return "CSR 87% (Silver) — eligible";
+  if (pct <= 250) return "CSR 73% (Silver) — eligible";
+  return "No CSR (>250% FPL)";
+}
+// Net premium after APTC. gross + estimated APTC → what client pays. COMPUTED estimate.
+function netPremium(income, size, gross) {
+  const pct = fplPct(income, size);
+  if (pct == null || !gross) return undefined;
+  // crude contribution model: % of income the client is expected to pay toward benchmark
+  const contribRate = pct <= 150 ? 0 : pct <= 200 ? 0.02 : pct <= 250 ? 0.04 : pct <= 400 ? 0.085 : 1;
+  const annualContribution = Math.min(gross * 12, income * contribRate);
+  const aptcMonthly = Math.max(0, gross - annualContribution / 12);
+  const net = Math.max(0, gross - aptcMonthly);
+  return { gross, aptc: Math.round(aptcMonthly), net: Math.round(net) };
 }
 
 async function idToKey(loc) {
@@ -240,11 +272,41 @@ export default async (req, context) => {
     const spouse = g("spouse_name");
     const size = 1 + (spouse ? 1 : 0) + depCount;
     const income = num(g("income"));
+    const spouseIncome = num(g("spouse_income"));
+    const depIncome = num(g("dep_income"));
+    const m$ = (n) => (n ? `$${Number(n).toLocaleString()}` : undefined);
 
     // Health card from the real Insurance Workflow stage
     const healthOpp = opps[0];
     const stageName = healthOpp ? oppStage(healthOpp) : "";
     const idx = HEALTH_STAGE_NAMES.findIndex((n) => n.toLowerCase() === String(stageName).toLowerCase());
+
+    // Health detail panel. COMPUTED = real (subsidy, CSR, net premium from income+size).
+    // AGENT/SIM = lives in GetCoveredNJ (no API per assessment) → demo placeholders,
+    // meant to be agent-entered fields later.
+    const grossPremium = 472; // SIM: carrier/plan premium (GetCoveredNJ) — placeholder
+    const np = netPremium(income, size, grossPremium);
+    const healthDetail = {
+      computed: {
+        subsidy: subsidy(income, size),
+        csr: csrTier(income, size),
+        netPremium: np ? { gross: m$(np.gross), aptc: m$(np.aptc), net: m$(np.net) } : undefined,
+      },
+      // agent-entered / GetCoveredNJ-sourced (simulated for demo)
+      carrier: "Horizon BCBS NJ",            // SIM
+      metalTier: "Silver",                    // SIM
+      planName: "Horizon Silver OMNIA",       // SIM
+      deductible: "$3,500 / $7,000 MOOP",     // SIM
+      effectuation: "Enrolled — first premium PAID (effectuated)", // SIM
+      enrollmentWindow: "Open Enrollment · closes 2026-01-15",     // SIM
+      sepDaysLeft: 0,                          // SIM (0 = OEP, >0 = SEP countdown)
+      reconRisk: "Income matches attestation — no 1095-A risk",    // SIM (also Tax x-sell signal)
+      coveredMembers: "Self + 1 dependent on plan; spouse on Medicare", // SIM
+      lastLifeEvent: "—",                      // SIM
+      applicationId: "GCNJ-APP-44821",         // SIM (GetCoveredNJ confirmation #)
+      gcnjStatus: "Effectuated · active 2026 coverage",            // SIM (GetCoveredNJ status)
+      planExpiry: "2026-12-31",                // plan year end
+    };
     const healthCard = {
       key: "health", label: "Health / ACA",
       state: stageName ? (idx === 3 ? "active" : "pending") : "none",
@@ -254,6 +316,7 @@ export default async (req, context) => {
         currentIndex: idx,
         stages: HEALTH_STAGE_NAMES.map((n, i) => ({ name: n, done: idx > i, current: idx === i })),
       },
+      healthDetail,
     };
 
     return json({
@@ -265,6 +328,8 @@ export default async (req, context) => {
       source: g("referred_by"),
       identity: {
         phone: contact.phone, email: contact.email, ssnMasked: mask(g("ssn")),
+        itin: g("itin"), businessName: g("business_name"),
+        middleName: g("middle_name"), sex: g("sex"),
         dlState: composite(dl, DL_OPT.state, /state/i), dlExp: composite(dl, DL_OPT.exp, /expir/i),
         address: contact.address1, citizenship,
         inUsSince: g("years_in_us") ? `${g("years_in_us")} yrs` : undefined,
@@ -277,9 +342,18 @@ export default async (req, context) => {
         maritalStatus: g("marital"),
         spouse: spouse ? { name: spouse, age: g("spouse_age") } : null,
         size: `${size}${depCount ? ` (incl. ${depCount} dependent${depCount > 1 ? "s" : ""})` : ""}`,
-        income: income ? `$${income.toLocaleString()}` : undefined,
-        dependents: depName ? [{ name: depName, age: g("dep_age") }] : [],
+        income: m$(income),
+        incomeBreakdown: {
+          primary: m$(income),
+          spouse: m$(spouseIncome),
+          dependent: m$(depIncome),
+          total: m$(income + spouseIncome + depIncome) || m$(income),
+        },
+        employment: g("employment"),
+        paymentMethod: g("payment_method"),
+        dependents: depName ? [{ name: depName, age: g("dep_age"), income: m$(depIncome) }] : [],
         subsidyHint: subsidy(income, size),
+        lastVerified: contact.dateUpdated ? String(contact.dateUpdated).slice(0, 10) : undefined,
       },
       documentsByLine: {
         health: HEALTH_DOCS.map(([label, key]) => ({ label, present: !!gv(key) })),
