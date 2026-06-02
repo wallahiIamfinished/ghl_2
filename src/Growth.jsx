@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { TrendingUp, Users, Repeat, AlertTriangle, Target, Megaphone, Share2, Link2 } from "lucide-react";
+import { demoIndividuals, buildUnits, ALL_LINES } from "./demoData";
 
 /* ============================================================================
    GROWTH INTELLIGENCE LAYER  (portfolio-level)
@@ -21,37 +22,18 @@ import { TrendingUp, Users, Repeat, AlertTriangle, Target, Megaphone, Share2, Li
    ========================================================================== */
 
 const LINES = ["Health", "Medicare", "Life", "Group", "Tax", "Bookkeeping", "Advisory", "P&C"];
-// modeled annual revenue per line (typical commission/fee order of magnitude)
-const LINE_REV = { Health: 450, Medicare: 520, Life: 900, Group: 1800, Tax: 350, Bookkeeping: 2400, Advisory: 1500, "P&C": 300 };
-const RECURRING = { Health: true, Medicare: true, Life: true, Group: true, Tax: false, Bookkeeping: true, Advisory: true, "P&C": true };
 
 // deterministic per-id hash so the same client always models the same way
 function hash(id) { let h = 0; const s = String(id || ""); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
 
-// derive a modeled profile for one contact row
-function model(row) {
-  const h = hash(row.id);
-  const nLines = 1 + (h % 4);                       // 1–4 active lines (modeled)
+// modeled line-membership for a REAL contact id (demo seeds carry their own _lines).
+// Mirrors the list page's clientLines so the two stay consistent.
+function clientLinesFromId(id) {
+  const h = hash(id);
   const lines = [];
-  for (let i = 0; i < LINES.length && lines.length < nLines; i++) {
-    if (((h >> i) & 1) || lines.length === 0 && i === 0) lines.push(LINES[i]);
-  }
-  // ensure at least one
+  LINES.forEach((l, i) => { if ((h >> i) & 1) lines.push(l); });
   if (!lines.length) lines.push("Health");
-  const value = lines.reduce((sum, l) => sum + LINE_REV[l], 0) + (h % 300);
-  const recurringRev = lines.filter((l) => RECURRING[l]).reduce((s, l) => s + LINE_REV[l], 0);
-  // cost-to-serve: more lines + a "chaos" factor → more touches/chases (modeled)
-  const touches = 4 + (h % 22) + nLines * 3;
-  const effort = Math.min(100, Math.round((touches / 40) * 100));
-  const valueScore = Math.min(100, Math.round((value / 4000) * 100));
-  const single = lines.length === 1;
-  const tier = valueScore >= 60 && effort <= 55 ? "A"
-    : valueScore >= 60 ? "B"
-    : effort <= 55 ? "C" : "D";
-  const quadrant = valueScore >= 50
-    ? (effort <= 50 ? "hv_le" : "hv_he")
-    : (effort <= 50 ? "lv_le" : "lv_he");
-  return { ...row, lines, value, recurringRev, touches, effort, valueScore, single, tier, quadrant };
+  return lines;
 }
 
 const fmt$ = (n) => "$" + Math.round(n).toLocaleString();
@@ -107,28 +89,49 @@ const CSS = `
 .gr .foot{font-size:11px;color:var(--muted);font-style:italic;margin-top:6px;line-height:1.5;}
 .gr .modeled{display:inline-block;font-size:8.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ochre);background:rgba(139,105,20,.12);border-radius:3px;padding:2px 6px;margin-left:6px;}
 @media(max-width:680px){.gr .kpis,.gr .tiers{grid-template-columns:repeat(2,1fr);}.gr .matrix,.gr .row2{grid-template-columns:1fr;}}
+.gr .gr-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:18px;}
+.gr .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
+.gr .seg button{border:0;background:var(--paper);font-family:var(--sans);font-size:12px;padding:6px 14px;cursor:pointer;color:var(--ink2);}
+.gr .seg button.on{background:var(--teal);color:#F4F1E8;}
+.gr .linefilter{display:flex;flex-wrap:wrap;gap:5px;}
+.gr .lf{font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);background:var(--paper);color:var(--ink2);cursor:pointer;font-family:var(--sans);}
+.gr .lf.on{background:var(--ochre);color:#F4F1E8;border-color:var(--ochre);}
 `;
 
 export default function Growth({ rows }) {
-  const data = useMemo(() => (rows || []).map(model), [rows]);
+  const [mode, setMode] = useState("household");   // individual | household
+  const [line, setLine] = useState(null);          // null = all lines
+
+  // Merge any real rows with the explicit DEMO seed so the book is always
+  // populated; build economic units per the mode + line filter.
+  const individuals = useMemo(() => {
+    const seed = demoIndividuals();
+    const realDemoShaped = (rows || []).map((r) => ({
+      ...r, _lines: clientLinesFromId(r.id), _income: 60000 + (hash(r.id) % 90000),
+      _hid: r.id, _role: "head",
+    }));
+    return [...seed, ...realDemoShaped];
+  }, [rows]);
+
+  const data = useMemo(() => buildUnits(individuals, mode, line), [individuals, mode, line]);
 
   const totals = useMemo(() => {
     const n = data.length || 1;
     const bookValue = data.reduce((s, d) => s + d.value, 0);
-    const recurring = data.reduce((s, d) => s + d.recurringRev, 0);
+    const recurring = data.reduce((s, d) => s + d.recurring, 0);
     const recurringPct = bookValue ? Math.round((recurring / bookValue) * 100) : 0;
     const singleProduct = data.filter((d) => d.single).length;
+    const churnRisk = bookValue ? Math.round((data.filter((d) => d.single).reduce((s, d) => s + d.value, 0) / bookValue) * 100) : 0;
     const avgLines = (data.reduce((s, d) => s + d.lines.length, 0) / n).toFixed(1);
     const tiers = { A: [], B: [], C: [], D: [] };
     const quads = { hv_le: [], hv_he: [], lv_le: [], lv_he: [] };
     data.forEach((d) => { tiers[d.tier].push(d); quads[d.quadrant].push(d); });
-    return { bookValue, recurring, recurringPct, singleProduct, avgLines, tiers, quads };
+    return { bookValue, recurring, recurringPct, singleProduct, churnRisk, avgLines, tiers, quads };
   }, [data]);
 
-  // top of book by value (real names, modeled value)
   const topClients = useMemo(() => [...data].sort((a, b) => b.value - a.value).slice(0, 6), [data]);
 
-  if (!rows) return <div className="gr"><style>{CSS}</style><div className="foot">Loading book…</div></div>;
+  const unitWord = mode === "household" ? "households" : "individuals";
 
   return (
     <div className="gr">
@@ -137,12 +140,26 @@ export default function Growth({ rows }) {
         How high-performing brokers actually grow: <b>depth over width, recurring over transactional, retention as the cheapest growth, and pruning the tail while doubling down on the top.</b> None of it is runnable without knowing each household's <b>value</b> and <b>cost to serve</b> — which is exactly what this layer establishes.
       </div>
 
+      {/* CONTROLS: individual/household + line-of-business filter */}
+      <div className="gr-controls">
+        <div className="seg">
+          <button className={mode === "household" ? "on" : ""} onClick={() => setMode("household")}>Households</button>
+          <button className={mode === "individual" ? "on" : ""} onClick={() => setMode("individual")}>Individuals</button>
+        </div>
+        <div className="linefilter">
+          <button className={`lf ${!line ? "on" : ""}`} onClick={() => setLine(null)}>All lines</button>
+          {ALL_LINES.map((l) => (
+            <button key={l} className={`lf ${line === l ? "on" : ""}`} onClick={() => setLine(l)}>{l}</button>
+          ))}
+        </div>
+      </div>
+
       {/* KPIs */}
       <div className="kpis">
-        <div className="kpi"><div className="v teal">{fmt$(totals.bookValue)}<span className="modeled">modeled</span></div><div className="l">Annual book value</div></div>
+        <div className="kpi"><div className="v teal">{fmt$(totals.bookValue)}<span className="modeled">modeled</span></div><div className="l">{line ? `${line} book value` : "Annual book value"}</div></div>
         <div className="kpi"><div className="v olive">{totals.recurringPct}%<span className="modeled">modeled</span></div><div className="l">Recurring revenue mix</div></div>
-        <div className="kpi"><div className="v">{totals.avgLines}<span className="modeled">modeled</span></div><div className="l">Avg lines / household</div></div>
-        <div className="kpi"><div className="v rust">{totals.singleProduct}<span className="modeled">modeled</span></div><div className="l">Single-product (churn risk)</div></div>
+        <div className="kpi"><div className="v">{totals.avgLines}<span className="modeled">modeled</span></div><div className="l">Avg lines / {mode === "household" ? "household" : "client"}</div></div>
+        <div className="kpi"><div className="v rust">{totals.churnRisk}%<span className="modeled">modeled</span></div><div className="l">Churn-risk revenue (single-line)</div></div>
       </div>
 
       {/* VALUE / EFFORT MATRIX */}
@@ -153,7 +170,7 @@ export default function Growth({ rows }) {
             <div className="quad" key={q}>
               <div className="qh"><span className="dotq" style={{ background: QUAD[q].color }} /> {QUAD[q].label}</div>
               <div className="qn">{QUAD[q].note}</div>
-              <div className="qc" style={{ color: QUAD[q].color }}>{totals.quads[q].length} <span style={{ fontSize: 11, color: "var(--muted)" }}>households · {fmt$(totals.quads[q].reduce((s, d) => s + d.value, 0))}</span></div>
+              <div className="qc" style={{ color: QUAD[q].color }}>{totals.quads[q].length} <span style={{ fontSize: 11, color: "var(--muted)" }}>{unitWord} · {fmt$(totals.quads[q].reduce((s, d) => s + d.value, 0))}</span></div>
               <div className="qnames">{totals.quads[q].slice(0, 4).map((d) => d.name).join(", ") || "—"}</div>
             </div>
           ))}
@@ -187,7 +204,7 @@ export default function Growth({ rows }) {
               <div className="tier" key={t}>
                 <div className="th" style={{ color: TIER_COLOR[t] }}>{t}</div>
                 <div className="tl">{labels[t]}</div>
-                <div className="tc">{grp.length} households · {fmt$(val)}</div>
+                <div className="tc">{grp.length} {unitWord} · {fmt$(val)}</div>
                 <div className="bar"><span style={{ width: `${Math.min(100, (grp.length / (data.length || 1)) * 100)}%`, background: TIER_COLOR[t] }} /></div>
               </div>
             );
@@ -202,12 +219,12 @@ export default function Growth({ rows }) {
           <div className="card">
             <div className="li"><span>Recurring revenue</span><span>{fmt$(totals.recurring)} <span className="muted">/ {totals.recurringPct}%</span></span></div>
             <div className="li"><span>Transactional revenue</span><span className="muted">{fmt$(totals.bookValue - totals.recurring)}</span></div>
-            <div className="li"><span><AlertTriangle size={12} style={{ verticalAlign: "middle", color: "var(--rust)" }} /> Single-product households</span><span style={{ color: "var(--rust)" }}>{totals.singleProduct}</span></div>
-            <div className="foot">Single-product households churn hardest — each is a depth (cross-sell) opportunity and a retention risk.</div>
+            <div className="li"><span><AlertTriangle size={12} style={{ verticalAlign: "middle", color: "var(--rust)" }} /> Single-line {unitWord}</span><span style={{ color: "var(--rust)" }}>{totals.singleProduct}</span></div>
+            <div className="foot">Single-line {unitWord} churn hardest — each is a depth (cross-sell) opportunity and a retention risk.</div>
           </div>
         </div>
         <div>
-          <div className="sec"><Target size={11} style={{ verticalAlign: "middle" }} /> Most valuable households <span className="modeled">modeled</span></div>
+          <div className="sec"><Target size={11} style={{ verticalAlign: "middle" }} /> Most valuable {unitWord} <span className="modeled">modeled</span></div>
           <div className="card">
             {topClients.map((d, i) => (
               <div className="li" key={i}>
@@ -224,7 +241,7 @@ export default function Growth({ rows }) {
       <div className="sec"><TrendingUp size={11} style={{ verticalAlign: "middle" }} /> Cross-sell depth gauge — the engine pointed at the whole book</div>
       <div className="card">
         <div className="li"><span>Avg lines per household</span><span>{totals.avgLines} <span className="muted">of 8</span></span></div>
-        <div className="li"><span>Households with 1 line (deepen first)</span><span>{totals.singleProduct}</span></div>
+        <div className="li"><span>{mode === "household" ? "Households" : "Individuals"} with 1 line (deepen first)</span><span>{totals.singleProduct}</span></div>
         <div className="li"><span>Open cross-sell signals across book</span><span className="muted">{Math.round(data.length * 0.4)} <span className="modeled">modeled</span></span></div>
         <div className="foot">The per-client cross-sell engine, aggregated. Depth (more lines per existing household) is cheaper growth than new acquisition.</div>
       </div>
@@ -234,7 +251,7 @@ export default function Growth({ rows }) {
       <div className="card">
         <div className="play"><Users size={15} className="ic" /><div><div className="pt2">Lookalike acquisition from your ICP</div><div className="pd">Target more high-value/low-effort profiles ({totals.quads.hv_le.length} today) — find more of your best, not just more bodies.</div></div></div>
         <div className="play"><Repeat size={15} className="ic" /><div><div className="pt2">Segment-triggered lifecycle campaigns</div><div className="pd">The cross-line filters become self-refilling audiences — AEP, renewals, life events — delivered in Spanish where flagged.</div></div></div>
-        <div className="play"><Share2 size={15} className="ic" /><div><div className="pt2">Referral campaigns aimed at A-tier</div><div className="pd">Your {totals.tiers.A.length} happiest, highest-value households become your cheapest acquisition channel, deliberately.</div></div></div>
+        <div className="play"><Share2 size={15} className="ic" /><div><div className="pt2">Referral campaigns aimed at A-tier</div><div className="pd">Your {totals.tiers.A.length} happiest, highest-value {unitWord} become your cheapest acquisition channel, deliberately.</div></div></div>
         <div className="play"><Link2 size={15} className="ic" /><div><div className="pt2">Source attribution → LTV loop</div><div className="pd">Tie each household’s eventual value back to how they came in, so marketing spend flows to what compounds. Most firms this size never close this loop.</div></div></div>
       </div>
 
