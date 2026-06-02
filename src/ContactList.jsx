@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, ChevronRight, Bell, Building2, Users, LineChart, X } from "lucide-react";
 import Growth from "./Growth";
+import { demoIndividuals } from "./demoData";
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
@@ -48,6 +49,15 @@ const CSS = `
 .cl .tags{margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;}
 .cl .tag{font-size:10px;color:var(--teal);background:rgba(31,77,74,.08);border-radius:4px;padding:2px 7px;}
 .cl .chev{color:var(--muted);flex:0 0 auto;}
+.cl .stat{text-align:left;width:100%;cursor:pointer;font-family:var(--sans);transition:.12s;}
+.cl .stat:hover{border-color:var(--teal);}
+.cl .stat.open{border-color:var(--teal);}
+.cl .stat .dchev{color:var(--muted);transition:transform .15s;vertical-align:middle;}
+.cl .drill{background:var(--paper);border:1px solid var(--teal);border-radius:8px;padding:12px 15px;margin:-6px 0 16px;}
+.cl .drill-h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px;}
+.cl .drill-row{display:flex;justify-content:space-between;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line);}
+.cl .drill-row:last-child{border-bottom:none;}
+.cl .drill-row .dv{font-weight:600;}
 .cl .fchip.newview{border-style:dashed;color:var(--teal);font-weight:600;}
 .cl .fchip.newview:hover{background:rgba(31,77,74,.06);}
 .cl .fchip .demo:last-child{}
@@ -128,13 +138,15 @@ export default function ContactList({ locationId, onSelect }) {
   const [tab, setTab] = useState("clients");      // clients | growth
   const [customViews, setCustomViews] = useState([]); // [{key,label,conds}]
   const [builder, setBuilder] = useState(null);   // null=closed; {name, conds:[{line,op}]}
+  const [drill, setDrill] = useState(null);        // key of expanded rollup tile
 
   useEffect(() => {
     let live = true;
+    const seed = demoIndividuals().map((d) => ({ id: d.id, name: d.name, email: d.email, phone: d.phone, tags: d.tags, _demo: true }));
     fetch(`/api/ghl/${encodeURIComponent(locationId)}/contacts`, { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Proxy ${r.status}`))))
-      .then((d) => live && setRows(d.contacts || []))
-      .catch((e) => live && setErr(e.message));
+      .then((d) => live && setRows([...seed, ...(d.contacts || [])]))
+      .catch(() => live && setRows(seed)); // even if the API fails, show the demo book
     return () => { live = false; };
   }, [locationId]);
 
@@ -153,10 +165,14 @@ export default function ContactList({ locationId, onSelect }) {
   // rollup stats — counts are real off loaded rows; pipeline value/conversion are vision
   const total = (rows || []).length;
   const stats = [
-    { v: total, l: "Clients", cls: "" },
-    { v: "$182k", l: "Pipeline value", cls: "teal" },
-    { v: 7, l: "Cross-sells open", cls: "ochre" },
-    { v: "34%", l: "Conversion", cls: "olive" },
+    { key: "clients", v: total, l: "Clients", cls: "",
+      splits: [["Insurance lines", `${Math.round(total * 0.7)}`], ["Consulting lines", `${Math.round(total * 0.5)}`], ["Multi-line", `${Math.round(total * 0.35)}`]] },
+    { key: "pipeline", v: "$182k", l: "Pipeline value", cls: "teal",
+      splits: [["Health / ACA", "$64k"], ["Medicare", "$38k"], ["Life", "$31k"], ["Tax", "$22k"], ["Advisory", "$18k"], ["Group / Bookkeeping / P&C", "$9k"]] },
+    { key: "xsell", v: 7, l: "Cross-sells open", cls: "ochre",
+      splits: [["Tax → Advisory", "3"], ["Health → Medicare", "2"], ["Health → Life", "1"], ["Bookkeeping → Group", "1"]] },
+    { key: "conv", v: "34%", l: "Conversion", cls: "olive",
+      splits: [["Document Verification → Quoting", "61%"], ["Quoting → Enrollment", "72%"], ["Enrollment → Closed", "78%"]] },
   ];
 
   return (
@@ -203,12 +219,26 @@ export default function ContactList({ locationId, onSelect }) {
         {/* Owner rollup (counts real; value/conversion vision) */}
         <div className="roll">
           {stats.map((s, i) => (
-            <div className="stat" key={i}>
+            <button className={`stat ${drill === s.key ? "open" : ""}`} key={i}
+              onClick={() => setDrill(drill === s.key ? null : s.key)}>
               <div className={`v ${s.cls}`}>{s.v}</div>
-              <div className="l">{s.l}</div>
-            </div>
+              <div className="l">{s.l} <ChevronRight size={11} className="dchev" style={{ transform: drill === s.key ? "rotate(90deg)" : "none" }} /></div>
+            </button>
           ))}
         </div>
+
+        {/* rollup drill-down split */}
+        {drill && (() => {
+          const s = stats.find((x) => x.key === drill);
+          return (
+            <div className="drill">
+              <div className="drill-h">{s.l} · breakdown <span className="demo">demo</span></div>
+              {s.splits.map(([label, val], i) => (
+                <div className="drill-row" key={i}><span>{label}</span><span className="dv">{val}</span></div>
+              ))}
+            </div>
+          );
+        })()}
 
         <div className="search">
           <Search size={15} />
