@@ -1,28 +1,27 @@
 # JN Client 360 — Codebase Documentation
 
 A worker-facing client dashboard that embeds inside GoHighLevel (GHL) as an
-iframe. It shows a searchable client list, and a per-client "360" view that
-pulls real data from GHL and presents it on one screen.
+iframe. It gives Julio's team a searchable client list, a per-client "360" view
+that pulls real data from GHL, and a portfolio-level **Growth Intelligence**
+view for running the book by value and cost-to-serve.
 
-This document is written for a **collaborator picking up the codebase**. It
-covers: what the system is, how data flows, what every file does, where to make
-common changes, what's real vs. demo, and how to deploy a new location.
+Written for a **collaborator picking up the codebase**: what the system is, how
+data flows, what every file does, where to change things, and the exact real-vs-
+demo split so nothing gets misrepresented in front of a client.
 
-> **Audience note:** you do not need deep React experience to maintain this.
-> The app is plain React with no router and no state library. All styling is
-> inline `<style>` blocks (no Tailwind, no CSS framework). Each component is a
-> single file.
+> **Maintainer note:** you do not need deep React experience. Plain React, no
+> router, no state library — just `useState`. All styling is inline `<style>`
+> blocks per component (no Tailwind). Each screen is one file.
 
 ---
 
 ## 1. What this is, in one paragraph
 
-The browser app is **static React built by Vite** and hosted on **Netlify**.
-The React code never talks to GHL directly — it calls **Netlify Functions**
-(small serverless endpoints in `netlify/functions/`) which hold the GHL API
-token server-side and return clean, pre-shaped JSON. The app is embedded in
-GHL via a **Custom Menu Link (iFrame)**. One deployment serves one GHL
-sub-account ("location"); the location ID is baked into `src/App.jsx`.
+The browser app is **static React built by Vite**, hosted on **Netlify**. React
+never calls GHL directly — it calls **Netlify Functions** (serverless endpoints
+in `netlify/functions/`) that hold the GHL token server-side and return clean,
+pre-shaped JSON. The app is embedded in GHL via a **Custom Menu Link (iFrame)**.
+One deployment serves one GHL sub-account ("location"), set in `src/App.jsx`.
 
 ```
 Browser (React, in GHL iframe)
@@ -34,9 +33,9 @@ Netlify Functions  (hold GHL token, shape data)   ← netlify/functions/*.mjs
 GoHighLevel API   (services.leadconnectorhq.com)
 ```
 
-**Why this shape:** the GHL token (a "Private Integration Token" / PIT) must
-never be exposed in browser code, and GHL's API can't be called from a browser
-anyway (no CORS). The Functions are the secure middle layer.
+**Why this shape:** the GHL Private Integration Token (PIT) must never be in
+browser code, and GHL's API can't be called from a browser (no CORS). The
+Functions are the secure middle layer.
 
 ---
 
@@ -44,22 +43,21 @@ anyway (no CORS). The Functions are the secure middle layer.
 
 | Thing | Value |
 |---|---|
-| Framework | React 18 + Vite 5 (build tool) |
-| Hosting | Netlify (static site + Functions) |
+| Framework | React 18 + Vite 5 |
+| Hosting | Netlify (static site + Functions, Node 20) |
 | Source repo | GitHub `wallahiIamfinished/ghl_2`, branch `main` |
-| Backend | Netlify Functions (Node 20), in `netlify/functions/` |
 | External API | GoHighLevel v2 — `https://services.leadconnectorhq.com` |
 | GHL sub-account (location) | `5awBlPxYQVQGyd1XudNB` |
-| GHL pipeline used | "Insurance Workflow" — `qT9EmKMANkGoTm8IAuQ4` |
+| GHL pipeline ("Insurance Workflow") | `qT9EmKMANkGoTm8IAuQ4` |
 | Icons | `lucide-react` |
-| State / routing | React `useState` only; no router, no Redux |
+| State / routing | React `useState` only |
 
 **Netlify environment variables** (set in Netlify UI, never in code):
-- `GHL_PIT` — the GHL Private Integration Token (the API credential)
+- `GHL_PIT` — the GHL Private Integration Token
 - `GHL_PIPELINE_ID` — `qT9EmKMANkGoTm8IAuQ4`
 
-The location ID is **not** an env var — it lives in `src/App.jsx` as a constant
-and is passed through the URL path to the Functions.
+Location ID is **not** an env var — it's a constant in `src/App.jsx`, passed to
+the Functions through the URL path.
 
 ---
 
@@ -71,197 +69,200 @@ jn-worker-ui/
 ├── package.json            — dependencies + build scripts
 ├── vite.config.js          — Vite + React plugin config
 ├── netlify.toml            — Netlify build config (build cmd, functions dir, Node 20)
-├── .env.example            — documents which env vars to set (no real values)
+├── .env.example            — documents env vars (no real values)
 ├── src/
-│   ├── main.jsx            — React entry point; mounts <App/>
+│   ├── main.jsx            — React entry; mounts <App/>
 │   ├── App.jsx             — top-level: list ↔ detail switching; holds LOCATION_ID
-│   ├── ContactList.jsx     — the client list page (search, filters, rollup header)
-│   └── UnifiedContactView.jsx — the per-client 360 detail view (the big file)
+│   ├── ContactList.jsx     — list page: Clients|Growth tabs, search, rollup, filters, custom views
+│   ├── UnifiedContactView.jsx — per-client 360 detail view (the big file)
+│   ├── Growth.jsx          — portfolio Growth Intelligence view
+│   └── demoData.js         — explicit DEMO seed households (shared by list + Growth)
 └── netlify/functions/
-    ├── ghl-contacts.mjs    — GET list of contacts        → /api/ghl/:loc/contacts
-    ├── ghl-contact.mjs     — GET one contact's full record→ /api/ghl/:loc/contact/:id
-    └── ghl-email.mjs       — GET email thread / POST send → /api/ghl/:loc/contact/:id/email
+    ├── ghl-contacts.mjs    — GET list           → /api/ghl/:loc/contacts
+    ├── ghl-contact.mjs     — GET one record     → /api/ghl/:loc/contact/:id
+    └── ghl-email.mjs       — GET thread / POST send → /api/ghl/:loc/contact/:id/email
 ```
 
-### 3.1 `index.html`
-The page shell. Contains `<div id="root">` (where React mounts) and a script
-tag loading `/src/main.jsx`. Rarely edited. The page `<title>` lives here.
+### 3.1 `index.html` / `src/main.jsx`
+The shell (`<div id="root">`) and the mount. Rarely touched.
 
-### 3.2 `src/main.jsx`
-Five lines. Imports React and `App`, and mounts `<App/>` into `#root`. You will
-basically never touch this.
+### 3.2 `src/App.jsx` *(top-level controller)*
+- **`const LOCATION_ID = "5awBlPxYQVQGyd1XudNB";`** — the one line to change per
+  franchise location.
+- Reads `?contactId=` for deep links.
+- Holds `selected` state: none → `<ContactList>`; a client → back button +
+  `<UnifiedContactView>` with `locationId` passed in (the email feature needs it).
 
-### 3.3 `src/App.jsx`  *(top-level controller)*
-The traffic cop between the two screens. Key contents:
-- **`const LOCATION_ID = "5awBlPxYQVQGyd1XudNB";`** — the GHL sub-account this
-  build serves. **This is the single line you change to point the app at a
-  different franchise location.**
-- Reads `?contactId=` from the URL for deep-linking straight to one client.
-- Holds `selected` state: if nothing is selected → render `<ContactList>`; if a
-  client is selected → render the "← All clients" back button + `<UnifiedContactView>`.
-- Builds the data adapter with `makeGhlAdapter(LOCATION_ID)` and passes
-  `locationId={LOCATION_ID}` to the detail view (the detail view needs it to
-  call the email endpoint).
+### 3.3 `src/ContactList.jsx` *(the list page)*
+The first screen. Contains:
+- **`CSS`** — all styles for this page (`.cl` prefix).
+- **`LINES`** — the 8 service lines.
+- **`PRESETS`** — built-in filter views as condition lists (All, Health·no Tax,
+  Medicare·no Life, Tax·no Advisory, P&C eligible).
+- **`NOTIFICATIONS`** — static bell items (demo).
+- **`clientLines(id)`** — MODELED per-client line membership (deterministic from
+  id); stand-in until real per-line status fields exist in GHL.
+- **`matchesConds(id, conds)`** — the filter engine; a client matches when all
+  conditions hold.
+- **Component** state: search, entity toggle, active filter/view, bell, Clients|
+  Growth `tab`, `customViews`, the view `builder`, and the rollup `drill`.
+  - On mount, seeds the list with `demoIndividuals()` (labeled DEMO) **then**
+    appends real `/contacts`; if the API fails it still shows the demo book.
+  - Renders: top bar (title, entity toggle, bell), **Clients|Growth tabs**, and
+    on the Clients tab: notifications, **rollup header (4 drillable tiles)**,
+    search, **filter chips + "New view" builder**, and the client list. The
+    Growth tab renders `<Growth rows={rows} />`.
+  - **Custom view builder** — name + Has/Doesn't-have line conditions, a live
+    match count, and Save (adds a session-only custom chip).
+  - **Rollup drill-down** — clicking a tile expands a split (pipeline by line,
+    conversion by stage, etc.). Splits are demo.
 
-### 3.4 `src/ContactList.jsx`  *(the list page)*
-The first screen: a searchable directory of clients plus the owner-facing
-header. Structure:
-- **`CSS`** — a template string of all styles for this page (class prefix `.cl`).
-- **`FILTERS`** — the cross-line filter view chips ("Health · no Tax", etc.).
-  These are **demo** (see §5); each non-"all" filter is marked `demo: true`.
-- **`NOTIFICATIONS`** — the static strings shown when the bell is clicked. **Demo.**
-- **`hashId(id)`** — a small deterministic hash used only to pick a stable,
-  consistent subset of clients for each demo filter (so a filter always shows
-  the same slice, not random ones).
-- **`ContactList({ locationId, onSelect })`** — the component:
-  - On mount, fetches `/api/ghl/{locationId}/contacts` and stores `rows`. **Real.**
-  - `filtered` — applies the text search (real) and then the active filter view
-    (demo subset). 
-  - Renders: top bar (title, **entity toggle**, **notification bell**), the
-    **rollup stat header** (4 tiles), the search box, the **filter chips**, then
-    the client list. Clicking a row calls `onSelect(id)` which switches App to
-    the detail view.
+### 3.4 `src/UnifiedContactView.jsx` *(the 360 detail view)*
+A **pure renderer** fed by an adapter. Top-of-file:
+- **`makeGhlAdapter(locationId)`** — `getContact(id)` fetches
+  `/api/ghl/{loc}/contact/{id}`; on any failure returns the built-in `MOCK`, so
+  the screen never renders blank.
+- **`MOCK`** — a complete sample record (Maria Gonzalez) matching live shape.
+- **Vision constants (demo):** `VISION_RAILS` / `VISION_RAIL_AT` / `VISION_POLICY`
+  (stage tracks + coverage detail for the 7 non-Health lines), `STAGE_STEPS`
+  (per-stage "steps to complete"), `CROSS_SELL_RULES` (reference list),
+  **`AUTO_FLAGS`** (Tier-1 automated cross-sell), **`SUGGESTED_FLAGS`** (Tier-2
+  human-verified), `COMPLIANCE`, `OCR_FIELDS`, `chaseSteps`, `QUICK_FIELDS`
+  (friendly-label → real GHL key map for the Quick Update panel).
 
-**Real vs. demo on this page:** the client list and text search are real. The
-entity toggle, notification bell, filter views, and the dollar/percentage rollup
-tiles are demo (the client *count* tile is real).
-
-### 3.5 `src/UnifiedContactView.jsx`  *(the 360 detail view — the large file)*
-The per-client screen. It is a **pure renderer**: it receives data from an
-"adapter" and draws it. It does not itself know how to talk to GHL.
-
-Top-of-file pieces:
-- **`makeGhlAdapter(locationId)`** — returns an object with `getContact(id)` that
-  fetches `/api/ghl/{locationId}/contact/{id}`. On *any* failure it returns the
-  built-in `MOCK` record, so the screen never renders blank. **This fallback is
-  intentional — it makes the demo bulletproof in front of a client.**
-- **`mockAdapter`** — always returns `MOCK`; used when there's no location.
-- **`MOCK`** — a complete sample record (Maria Gonzalez) matching the live data
-  shape. This is what shows if the API call fails.
-- **`CSS`** — all styles for this view (class prefix `.ucv`).
-- **Vision data constants** (all demo): `VISION_RAILS` (stage tracks for the 7
-  non-Health lines), `VISION_RAIL_AT`, `VISION_POLICY` (coverage detail per
-  line), `CROSS_SELL_RULES` (the 16-rule engine table), `COMPLIANCE` (consent
-  strip), `OCR_FIELDS` (fake extracted fields for the doc-preview modal),
-  `chaseSteps` (the document-chase animation steps).
-- **`UnifiedContactView({ contactId, adapter, locationId, onAction })`** — the
-  component. Holds state for which card/activity is expanded, the email compose
-  panel, the doc-preview modal, the transcript modal, and the chase animation.
-
-What it renders, top to bottom:
-1. **Header** — name, DOB/location/language, "Client of", and the action buttons
-   (Call = `tel:` link, Email = opens compose panel, WApp = disabled, New
-   Opportunity = calls `onAction`).
-2. **AI summary** blurb (demo; composed from real fields).
+Render, top to bottom:
+1. **Header** — name, DOB/location/language, "Client of", actions (Call `tel:`,
+   Email → compose panel, WApp disabled, **Quick update**, New Opportunity).
+2. **AI summary** (demo, composed from real fields).
 3. **Compliance strip** (demo).
-4. **Next best action** card (demo).
-5. **Identity (Block A/B)** + **Household (Block C)** — **real** (incl. the
-   immigration sub-panel and the computed ACA subsidy estimate).
-6. **Service Line State (Block D)** — 8 cards. Health is **real** (reflects the
-   live Insurance Workflow stage, with a real expandable stage rail). The other
-   7 are **demo** cards with vision rails + policy detail when expanded.
-7. **Cross-sell Engine (Block E)** — the 16 rules. **Demo.**
-8. **Recent Activity** — **real** timeline (emails, form submissions, notes,
-   tasks pulled from GHL). Calls open a demo transcript modal.
-9. **Document Checklist** — tabbed Health / Tax / Life. Health is **real**
-   (driven by file-upload fields); Tax & Life are **demo** lists. Includes the
-   "Request missing documents" button (demo chase animation).
-10. **Opportunities** — **real** (the client's GHL opportunities).
-11. **Email modal**, **doc-preview modal**, **transcript modal** — overlays.
+4. **Next best action** (demo).
+5. **Identity (Block A/B)** — REAL. Now includes business name, ITIN, middle
+   name, sex, plus the immigration sub-panel.
+6. **Household (Block C)** — REAL. Income breakdown (primary/spouse/dependent/
+   total), employment, payment method, structured dependents w/ ages, ACA
+   subsidy estimate, and **last-verified date**.
+7. **Service Line State (Block D)** — 8 cards. Health REAL (live pipeline stage +
+   expandable rail + **steps to complete** + **Health/ACA detail panel**). Other
+   7 are demo (vision rail + policy detail + steps when expanded).
+8. **Cross-sell (Block E)** — two tiers:
+   - **Suggested · needs review** (Tier 2) — inferred flags with confidence
+     badges and Follow up / Dismiss / Confirm controls (+ undo).
+   - **Running automatically** (Tier 1) — birthdays, renewals, expiry,
+     effectuation; shown as background/no-review, with next-run times.
+9. **Recent Activity** — REAL timeline (emails, form submissions, notes, tasks)
+   + a prepended demo call-summary row; calls open a demo transcript modal.
+10. **Document Checklist** — tabbed Health/Tax/Life. Health REAL (file-upload
+    fields); Tax/Life demo. Rows open a demo OCR preview; **Add misc** adds
+    checkable edge-case document rows; "Request missing documents" runs a demo
+    chase animation.
+11. **Modals** — email compose/send/thread, doc preview, call transcript, Quick
+    Update.
 
-### 3.6 `netlify/functions/ghl-contacts.mjs`  *(list endpoint)*
-- **Route:** `GET /api/ghl/:locationId/contacts`
-- Calls GHL `GET /contacts/?locationId=...&limit=100`, maps each contact down to
-  `{ id, name, email, phone, tags }`, returns `{ contacts: [...] }`.
-- Used by `ContactList.jsx`. All real.
+**The Health/ACA detail panel** (inside the expanded Health card) is the
+Insurance-tab home for: subsidy/FPL, CSR tier, net premium (gross/APTC/net) —
+all COMPUTED/real from income+size — plus carrier, metal tier, deductible/MOOP,
+effectuation, enrollment window/SEP countdown, APTC reconciliation, covered
+members, last life event, application/confirmation #, GetCoveredNJ status, and
+plan expiry — all agent-entered / GetCoveredNJ-sourced (demo, no API).
 
-### 3.7 `netlify/functions/ghl-contact.mjs`  *(detail endpoint — the core backend)*
-- **Route:** `GET /api/ghl/:locationId/contact/:id`
-- This is where **real and vision data are assembled into one record**. Key
-  internal pieces:
-  - **`F`** — the field map: maps friendly names → the real GHL custom-field
-    keys for this location (e.g. `ssn → contact.social_security_numberssn`).
-    **This is the table you edit if custom-field keys change or you add a
-    location with different fields.**
-  - **`HEALTH_DOCS`** — the real document checklist; each entry maps a label to
-    a file-upload field key. Presence of a value = document collected.
-  - **`TAX_DOCS_DUMMY` / `LIFE_DOCS_DUMMY`** — hardcoded demo checklists.
-  - **`HEALTH_STAGES` / `HEALTH_STAGE_NAMES`** — the Insurance Workflow pipeline
-    stage IDs → names (Document Collection → Documents Complete → Enrollment →
-    Closed).
-  - **`VISION_CARDS` / `VISION_CROSSSELL`** — demo content for the 7 non-Health
-    service lines and the cross-sell panel seed.
-  - **`activityTimeline()`** — pulls **real** activity: emails (Conversations
-    API), form submissions, notes, tasks. Each source is independently
-    try/caught so one failing doesn't break the rest.
-  - **`subsidy()`** — computes the ACA FPL% estimate from real income + size.
-  - The handler fetches the contact, its custom fields, opportunities, and the
-    activity timeline, then returns one combined JSON object.
-- **Env used:** `GHL_PIT`, `GHL_PIPELINE_ID`.
+### 3.5 `src/Growth.jsx` *(Growth Intelligence — portfolio view)*
+Rendered as the **Growth tab** on the list page. Reframes the book around value
+and cost-to-serve. Contains:
+- **`clientLinesFromId(id)`** — modeled line membership for real contacts
+  (mirrors the list's `clientLines`).
+- **Controls:** Households ↔ Individuals toggle, and a line-of-business filter
+  (All lines + a chip per line). Every module re-computes when these change.
+- **Modules:** KPI strip (book value, recurring mix, avg lines, churn-risk
+  revenue), the ★ Value/Effort matrix (4 quadrants + scatter), auto-tiered book
+  (A/B/C/D), recurring & churn radar, most-valuable units, book-wide cross-sell
+  depth gauge, and marketing plays (lookalike, lifecycle, referral, attribution).
+- Data comes from `demoData.js` (seed households) merged with any real contacts;
+  all dollar/effort/tier values are MODELED.
 
-### 3.8 `netlify/functions/ghl-email.mjs`  *(email endpoint)*
-- **Route:** `GET` (fetch thread) and `POST` (send) on
-  `/api/ghl/:locationId/contact/:id/email`
-- **`FROM_ADDRESSES`** — the list shown in the compose dropdown. **You must edit
-  this** to your real verified sending addresses (GHL has no API to list them).
-- `GET` returns the contact's email thread + the from-address options.
-- `POST` sends via GHL `POST /conversations/messages/outbound` (type `Email`),
-  then returns the refreshed thread. The email lands in the contact's GHL
-  conversation thread. **Real**, but requires the PIT to have conversations
-  *write* scope.
+### 3.6 `src/demoData.js` *(shared demo seed)*
+- **`DEMO_HOUSEHOLDS`** — six labeled "DEMO" households built only from fields
+  the two intake forms capture (name, spouse, dependents w/ ages, income,
+  services/lines, language, source).
+- **`demoIndividuals()`** — flattens households to individual rows (tagged DEMO).
+- **`buildUnits(individuals, mode, lineFilter)`** — builds economic units per
+  Individual or Household, applies a line filter, computes value/effort/tier/
+  quadrant. Used by Growth.
+- **`linesRevenue`, `ALL_LINES`** — modeled revenue per line + the line list.
+
+### 3.7 `netlify/functions/ghl-contacts.mjs` *(list endpoint)*
+`GET /api/ghl/:locationId/contacts` → maps GHL contacts to `{id,name,email,
+phone,tags}`. All real.
+
+### 3.8 `netlify/functions/ghl-contact.mjs` *(detail endpoint — core backend)*
+`GET /api/ghl/:locationId/contact/:id`. Assembles the full record. Key pieces:
+- **`F`** — friendly-name → real GHL custom-field key map. Includes ssn, **itin**,
+  drivers_license, **business_name** (⚠ no confirmed key in the GHL export — set
+  it once the field exists, else blank), income, **spouse_income**, **dep_income**,
+  **employment**, **payment_method**, immigration fields, etc.
+- **`HEALTH_DOCS`** — real checklist (label → file-upload field key).
+- **`TAX_DOCS_DUMMY` / `LIFE_DOCS_DUMMY`** — demo checklists.
+- **`HEALTH_STAGE_NAMES` / `HEALTH_STAGES`** — pipeline stages: **Document
+  Verification → Quoting → Enrollment → Closed**. The function reads GHL's live
+  stage name first; the ID map is a fallback.
+- **Computed helpers (real):** `subsidy`/`fplPct` (ACA FPL %), `csrTier` (CSR
+  band), `netPremium` (gross/APTC/net).
+- **`activityTimeline()`** — real: emails (Conversations), form submissions,
+  notes, tasks; each source independently try/caught.
+- **Return shape:** `identity`, `household` (with `incomeBreakdown`, `dependents`,
+  `lastVerified`), `serviceLines` (Health card carries `healthDetail`),
+  `documentsByLine`, `activity`, `opportunities`.
+- Env: `GHL_PIT`, `GHL_PIPELINE_ID`.
+
+### 3.9 `netlify/functions/ghl-email.mjs` *(email endpoint)*
+`GET` (thread + from-addresses) / `POST` (send). **`FROM_ADDRESSES`** populates
+the compose dropdown — **edit to your verified sending addresses** (GHL has no
+API to list them). Send uses `POST /conversations/messages/outbound`; needs the
+PIT to have conversations **write** scope. Email lands in the contact's GHL
+thread. Real.
 
 ---
 
-## 4. Data flow walkthroughs
+## 4. Data flow (quick)
 
-**Opening the app:**
-`index.html` → `main.jsx` mounts `App` → no `contactId` selected → `App` renders
-`ContactList` → `ContactList` calls `/api/ghl/{loc}/contacts` → `ghl-contacts.mjs`
-calls GHL → returns slim list → list renders.
-
-**Clicking a client:**
-`ContactList` calls `onSelect(id)` → `App` sets `selected` → renders
-`UnifiedContactView` with `makeGhlAdapter` → adapter calls
-`/api/ghl/{loc}/contact/{id}` → `ghl-contact.mjs` gathers contact + custom
-fields + opportunities + activity, assembles real + vision → returns one object →
-the view renders it. If that fetch fails, the adapter returns `MOCK` instead.
-
-**Sending an email:**
-User clicks **Email** → compose panel opens, does `GET …/email` to load the
-thread + from-addresses → user writes + confirms → `POST …/email` →
-`ghl-email.mjs` sends via GHL → thread refreshes with the new message.
+- **Open app:** `App` → no selection → `ContactList` seeds DEMO rows + fetches
+  `/contacts`.
+- **Click client:** `App` sets `selected` → `UnifiedContactView` → adapter calls
+  `/contact/:id` → renders real + vision; on failure falls back to `MOCK`.
+- **Growth tab:** `ContactList` renders `<Growth rows={rows}/>`, which merges
+  seed + real and models the book.
+- **Send email:** Email button → `GET …/email` loads thread + from-list → write
+  + confirm → `POST …/email` → thread refreshes.
 
 ---
 
-## 5. Real vs. demo ("Potemkin") — the honesty ledger
+## 5. Real vs. demo ("Potemkin") ledger
 
-The build deliberately mixes live data with demo content so the screen looks
-complete while only some lines are wired. **Keep this straight when presenting.**
+**Real (live GHL data or computed from it):**
+- Client list + search; opportunities
+- Identity (incl. business name/ITIN/middle name/sex/immigration)
+- Household (income breakdown, structured dependents, employment, payment,
+  last-verified)
+- ACA subsidy %, CSR tier, net-premium-after-APTC (computed from income + size)
+- Health/ACA card: live pipeline stage + expandable rail
+- Health document checklist (file-upload fields)
+- Recent activity timeline (emails, forms, notes, tasks)
+- Email send + thread (once FROM_ADDRESSES + write scope are set)
 
-**Real (live GHL data):**
-- Client list + search
-- Identity, immigration/citizenship panel, household, spouse/dependent
-- ACA subsidy estimate (computed from real income + household size)
-- Health/ACA card + its pipeline stage + expandable rail (from Insurance Workflow)
-- Health document checklist (from real file-upload fields)
-- Recent activity timeline (emails, form submissions, notes, tasks)
-- Opportunities rollup
-- Email send + thread (once `FROM_ADDRESSES` and write scope are set)
-- Call (`tel:`) and Email buttons
+**Demo / vision (not wired):**
+- Health detail panel's plan/carrier/effectuation/SEP/app#/GetCoveredNJ status
+  (GetCoveredNJ has no API)
+- The 7 non-Health service-line cards, their rails, policy detail, and steps
+- Cross-sell Tier 1 (auto flags) + Tier 2 (suggested review queue)
+- AI summary, compliance strip, next best action, OCR preview, call transcript,
+  call-summary activity row, "request missing docs" chase, Add-misc docs
+- List page: entity toggle, bell, filter views + custom view builder, rollup
+  tiles' dollar/percentage values and drill-down splits (client count is real)
+- Growth tab: entire dollar/effort/tier layer is MODELED; the roster/counts are
+  real, and the household grouping is modeled from real form fields
+- The six DEMO seed households in `demoData.js` (explicitly labeled)
+- WhatsApp button (disabled)
 
-**Demo (hardcoded / vision — not wired to data):**
-- The other 7 service-line cards (Medicare, Life, Group, Tax, Bookkeeping,
-  Advisory, P&C) and their stage rails + policy detail
-- Cross-sell 16-rule engine panel
-- AI summary blurb, compliance strip, next best action card
-- Document preview (fake OCR), call transcript modal
-- "Request missing documents" chase animation
-- Tax & Life document checklists
-- List page: entity toggle, notification bell, cross-line filter views, and the
-  dollar/percentage rollup tiles (client count is real)
-- WhatsApp button (disabled placeholder)
-
-Anything demo on the list page carries a small **"demo"** badge in the UI.
+Demo items carry visible "demo"/"modeled" labels in the UI.
 
 ---
 
@@ -269,76 +270,73 @@ Anything demo on the list page carries a small **"demo"** badge in the UI.
 
 | I want to… | Edit | Notes |
 |---|---|---|
-| Point the app at a different GHL location | `src/App.jsx` → `LOCATION_ID` | One line. Also set that location's PIT in Netlify env. |
-| Update a custom-field mapping | `netlify/functions/ghl-contact.mjs` → `F` | Keys must match GHL's `fieldKey` exactly. |
-| Change which docs are in the Health checklist | `ghl-contact.mjs` → `HEALTH_DOCS` | Each is `[label, fileUploadFieldKey]`. |
+| Point at a different GHL location | `src/App.jsx` → `LOCATION_ID` | One line; also set that PIT in Netlify env. |
+| Update a custom-field mapping | `ghl-contact.mjs` → `F` | Keys must match GHL `fieldKey` exactly. |
+| Set the business-name field key | `ghl-contact.mjs` → `F.business_name` | No confirmed key yet — create field in GHL, then set it. |
+| Change the Health doc checklist | `ghl-contact.mjs` → `HEALTH_DOCS` | `[label, fileUploadFieldKey]`. |
 | Change Tax/Life demo checklists | `ghl-contact.mjs` → `TAX_DOCS_DUMMY` / `LIFE_DOCS_DUMMY` | `[label, present]`. |
-| Change the email "from" options | `netlify/functions/ghl-email.mjs` → `FROM_ADDRESSES` | Must be verified sending addresses. |
-| Change the pipeline / its stages | `ghl-contact.mjs` → `HEALTH_STAGES`, `HEALTH_STAGE_NAMES` + Netlify `GHL_PIPELINE_ID` | Stage IDs come from GHL. |
-| Edit the 16 cross-sell rules text | `UnifiedContactView.jsx` → `CROSS_SELL_RULES` | Demo display only. |
-| Edit vision stage rails / policy detail | `UnifiedContactView.jsx` → `VISION_RAILS`, `VISION_POLICY` | Demo. |
-| Edit the demo filter views / notifications | `ContactList.jsx` → `FILTERS`, `NOTIFICATIONS` | Demo. |
+| Change pipeline stage names | `ghl-contact.mjs` → `HEALTH_STAGE_NAMES` / `HEALTH_STAGES` | Function reads live name first; ID map is fallback. |
+| Change Health-stage subtasks | `UnifiedContactView.jsx` → `STAGE_STEPS.health` | Placeholder steps. |
+| Edit the Health detail panel values | `ghl-contact.mjs` → `healthDetail` block | Computed = real; rest = demo placeholders. |
+| Edit Tier-1 auto flags / Tier-2 suggestions | `UnifiedContactView.jsx` → `AUTO_FLAGS` / `SUGGESTED_FLAGS` | Demo. |
+| Edit the Quick Update field list | `UnifiedContactView.jsx` → `QUICK_FIELDS` | Friendly label → real key. |
+| Edit email from-addresses | `ghl-email.mjs` → `FROM_ADDRESSES` | Must be verified sending addresses. |
+| Edit demo seed clients | `src/demoData.js` → `DEMO_HOUSEHOLDS` | Form-capturable fields only. |
+| Edit the modeled revenue per line | `demoData.js` → `LINE_REV` / `RECURRING` | Drives Growth dollar values. |
+| Edit preset filter views | `ContactList.jsx` → `PRESETS` | Condition lists. |
+| Edit rollup tiles / drill splits | `ContactList.jsx` → `stats` | Counts real; values/splits demo. |
 | Change colors / styling | the `CSS` string at the top of each component | Inline; no external stylesheet. |
-| Change the AI summary wording | `UnifiedContactView.jsx` → the `aiSummary` line | Composed from real fields. |
 
 ---
 
-## 7. Deploying / running
+## 7. Deploy / run
 
-**Local dev** (optional; needs Node 18+):
-```
-npm install
-npm run dev        # UI only
-# or, to run Functions locally too:
-npx netlify dev
-```
+**Local dev** (Node 18+): `npm install` then `npm run dev` (UI), or
+`npx netlify dev` (UI + Functions).
 
-**Deploy** (normal flow): push to `main` on GitHub → Netlify auto-builds from
-`netlify.toml` (`npm run build`, publish `dist`, Functions from
-`netlify/functions/`). After changing env vars, trigger **Clear cache and deploy**.
+**Deploy:** push to `main` → Netlify auto-builds from `netlify.toml`
+(`npm run build`, publish `dist`, Functions from `netlify/functions/`). After
+env changes use **Clear cache and deploy**.
 
-**Verify the backend** by hitting these URLs in a browser after deploy:
-- `https://SITE/api/ghl/5awBlPxYQVQGyd1XudNB/contacts` → JSON list
-- `https://SITE/api/ghl/5awBlPxYQVQGyd1XudNB/contact/<id>` → JSON detail
+**Verify backend** in a browser after deploy:
+- `https://SITE/api/ghl/5awBlPxYQVQGyd1XudNB/contacts`
+- `https://SITE/api/ghl/5awBlPxYQVQGyd1XudNB/contact/<id>`
 
-**Embed in GHL:** agency view → Settings → Custom Menu Links → Create New →
-iFrame → link = the Netlify site URL.
+**Embed in GHL:** Settings → Custom Menu Links → Create New → iFrame → the
+Netlify site URL.
+
+**Folder structure matters:** GitHub web upload flattens folders and breaks the
+build. Use github.dev (press `.`) or "Create new file" with the full slash path,
+and commit to `main`.
 
 ---
 
 ## 8. Replicating to a new franchise location
 
-1. Copy the repo (or use the same one with a build per location).
-2. In `src/App.jsx`, set `LOCATION_ID` to the new sub-account's ID.
-3. Confirm the new location's custom-field keys match the `F` map in
-   `ghl-contact.mjs`; update if they differ.
-4. Set that location's `GHL_PIT` (and `GHL_PIPELINE_ID`) in Netlify env.
-5. Update `FROM_ADDRESSES` in `ghl-email.mjs` to that location's verified
-   sending addresses.
-6. Deploy and embed as a Custom Menu Link in that GHL sub-account.
-
-> The Functions take `locationId` from the URL path, so the architecture already
-> supports multiple locations from one codebase — the per-location work is the
-> field-map check, the token, and the from-addresses.
+1. Set `LOCATION_ID` in `src/App.jsx`.
+2. Confirm the new location's custom-field keys match `F` in `ghl-contact.mjs`.
+3. Set `GHL_PIT` (+ `GHL_PIPELINE_ID`) in Netlify env.
+4. Set `FROM_ADDRESSES` in `ghl-email.mjs` to that location's verified addresses.
+5. Deploy and embed as a Custom Menu Link.
 
 ---
 
-## 9. Gotchas a collaborator should know
+## 9. Gotchas
 
-- **GHL token is server-side only.** Never put the PIT in any `src/` file or in
-  the browser. It lives in Netlify env and is read only by the Functions.
-- **PIT scopes matter.** Read scopes: contacts, opportunities, custom fields,
-  conversations, forms, notes, tasks. The email *send* needs conversations
-  **write**. A missing scope shows up as a 401/403 from a Function.
-- **The app falls back to `MOCK`** on any detail-fetch failure, so a blank-ish or
-  "Maria Gonzalez" screen in production usually means the API call failed
-  (token/scope/field issue) — check the Function logs in Netlify and the
-  `/api/...` URLs directly.
-- **Folder structure must be preserved** in the repo (`src/`, `netlify/functions/`).
-  The most common deploy failure here has been files uploaded flat instead of in
-  their folders. Use github.dev or "Create new file" with the full slash path.
-- **GHL has no public "contact timeline" or "list verified emails" endpoint** —
-  that's why the activity feed is assembled from several endpoints and the email
-  from-list is a hardcoded config.
-- **No router.** Navigation is just `App`'s `selected` state. Deep links use the
-  `?contactId=` query param.
+- **Token is server-side only** — PIT lives in Netlify env, read only by the
+  Functions. Never in `src/`.
+- **PIT scopes:** read — contacts, opportunities, custom fields, conversations,
+  forms, notes, tasks; **write** — conversations (for email send). A missing
+  scope shows as a 401/403 from a Function.
+- **MOCK fallback:** a "Maria Gonzalez" screen in production means the detail
+  fetch failed — check Netlify Function logs and the `/api/...` URLs.
+- **business_name** has no confirmed GHL field key yet — blank on live until the
+  field is created and `F.business_name` is set.
+- **Per-line status is modeled** — the filter views, custom views, and Growth
+  line membership run on a deterministic model until real per-line status fields
+  exist in GHL. Creating those fields makes all of it live with no code change.
+- **No public "contact timeline" or "list verified emails" endpoint** in GHL —
+  the activity feed is assembled from several endpoints; the email from-list is
+  hardcoded config.
+- **No router** — navigation is `App`'s `selected` state + `?contactId=` deep
+  links.
